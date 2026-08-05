@@ -42,6 +42,16 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // Take the token's claim types verbatim.
+        //
+        // Left on, the handler rewrites short names through its inbound map — "role"
+        // becomes the WS-Federation ClaimTypes.Role URI — while RoleClaimType below still
+        // looks for "role". The claim is present, the lookup misses, and every
+        // [Authorize(Roles = ...)] endpoint answers 403 to a perfectly valid token.
+        // Clearing JwtSecurityTokenHandler's static map is not enough here: .NET 8 uses
+        // JsonWebTokenHandler, which keeps its own.
+        options.MapInboundClaims = false;
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,

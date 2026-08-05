@@ -61,14 +61,28 @@ public class ExceptionHandlingMiddleware
             exception.StatusCode,
             exception.Message);
 
-        var problem = new ProblemDetails
-        {
-            Type = "about:blank",
-            Title = exception.Title,
-            Status = exception.StatusCode,
-            Detail = exception.Message,
-            Instance = context.Request.Path
-        };
+        // A validation failure raised by a service carries the offending field, so it is
+        // reported in the same shape the validation filter uses. A client should not have
+        // to parse two different 422 bodies depending on which layer caught the problem.
+        ProblemDetails problem = exception is ValidationFailedException validationFailure
+            ? new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                [validationFailure.Field] = new[] { validationFailure.Message }
+            })
+            {
+                Type = "about:blank",
+                Title = exception.Title,
+                Status = exception.StatusCode,
+                Instance = context.Request.Path
+            }
+            : new ProblemDetails
+            {
+                Type = "about:blank",
+                Title = exception.Title,
+                Status = exception.StatusCode,
+                Detail = exception.Message,
+                Instance = context.Request.Path
+            };
 
         await WriteAsync(context, problem);
     }

@@ -66,10 +66,27 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         await _container.DisposeAsync();
     }
 
-    public AppDbContext CreateDbContext()
+    /// <summary>
+    /// Runs work against a scoped DbContext and disposes the scope afterwards.
+    ///
+    /// Handing back a context from a scope nobody holds would leave it liable to be
+    /// disposed under the caller, which fails intermittently and looks like a flaky test
+    /// rather than a lifetime bug.
+    /// </summary>
+    public async Task<T> WithDbAsync<T>(Func<AppDbContext, Task<T>> work)
     {
-        var scope = Services.CreateScope();
-        return scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        return await work(db);
+    }
+
+    public async Task WithDbAsync(Func<AppDbContext, Task> work)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await work(db);
     }
 }
 
