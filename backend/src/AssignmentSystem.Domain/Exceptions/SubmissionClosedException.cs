@@ -4,10 +4,10 @@
 namespace AssignmentSystem.Domain.Exceptions;
 
 /// <summary>
-/// The submission window is closed: the deadline has passed and the assignment does not
-/// allow the attempted action. Covers business rule 5 (late submit when
-/// AllowLateSubmission is false) and business rule 7 (update after the deadline, or when
-/// AllowUpdateBeforeDeadline is false). Maps to 409.
+/// The submission window is closed: the assignment does not allow the attempted action, or
+/// it is no longer the student's to make. Covers business rule 5 (late submit when
+/// AllowLateSubmission is false) and business rule 7 (update after the deadline, when
+/// AllowUpdateBeforeDeadline is false, or once a teacher has reviewed the work). Maps to 409.
 /// </summary>
 public sealed class SubmissionClosedException : DomainException
 {
@@ -20,6 +20,9 @@ public sealed class SubmissionClosedException : DomainException
 
     public static SubmissionClosedException UpdatesNotAllowed() =>
         new("This assignment does not allow submissions to be updated.");
+
+    public static SubmissionClosedException AlreadyGraded() =>
+        new("This submission has been reviewed and can no longer be changed.");
 
     public override string Title => "Submission closed";
 

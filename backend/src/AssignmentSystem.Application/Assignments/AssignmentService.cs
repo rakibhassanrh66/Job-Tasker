@@ -37,6 +37,18 @@ public interface IAssignmentService
     /// <summary>Submissions for one of the calling teacher's own assignments.</summary>
     Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
         Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>One assignment for a teacher or an admin. A teacher may only reach their
+    /// own (rule 4); an admin may reach any, which is the whole point of oversight.</summary>
+    Task<AssignmentDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>Published assignments for the classes the calling student is enrolled in.</summary>
+    Task<PagedResult<StudentAssignmentDto>> ListAvailableAsync(
+        AssignmentListQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>One assignment, as visible to the calling student.</summary>
+    Task<StudentAssignmentDto> GetForStudentAsync(
+        Guid id, CancellationToken cancellationToken = default);
 }
 
 public class AssignmentService : IAssignmentService
@@ -91,6 +103,22 @@ public class AssignmentService : IAssignmentService
             .ToPagedResultAsync(query, cancellationToken);
     }
 
+    public async Task<AssignmentDto> GetByIdAsync(
+        Guid id, CancellationToken cancellationToken = default)
+    {
+        var assignment = await LoadAsync(id, cancellationToken);
+
+        // An admin reaches any assignment — that is the point of oversight. A teacher is
+        // held to rule 4 and may only reach their own. Checked after the load and before
+        // anything is returned, matching the other teacher reads.
+        if (_currentUser.Role == UserRole.Teacher)
+        {
+            _authorizer.EnsureTeacherOwnsAssignment(_currentUser.RequireUserId(), assignment);
+        }
+
+        return await ProjectAsync(id, cancellationToken);
+    }
+
     public async Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
         Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default)
     {
@@ -121,6 +149,101 @@ public class AssignmentService : IAssignmentService
             .Select(Projections.ToSubmissionDto)
             .ToPagedResultAsync(query, cancellationToken);
     }
+
+    // ---------------------------------------------------------------------------------
+    // Student reads — business rules 1 and 2
+    // ---------------------------------------------------------------------------------
+
+    public async Task<PagedResult<StudentAssignmentDto>> ListAvailableAsync(
+        AssignmentListQuery query, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+
+        // Both scoping rules are expressed as one composed query, so they execute as a
+        // single SQL statement. Fetching broadly and filtering in memory would mean rows
+        // the student may not see are read out of the database at all — and one forgotten
+        // filter downstream would leak them.
+        var available = _db.Assignments
+            .AsNoTracking()
+            .Where(a => a.Status == AssignmentStatus.Published)
+            .Where(a => _db.Enrollments.Any(e =>
+                e.StudentId == studentId && e.ClassCourseId == a.ClassCourseId));
+
+        if (query.ClassCourseId is not null)
+        {
+            available = available.Where(a => a.ClassCourseId == query.ClassCourseId);
+        }
+
+        if (query.SubjectId is not null)
+        {
+            available = available.Where(a => a.SubjectId == query.SubjectId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim().ToLower();
+            available = available.Where(a => a.Title.ToLower().Contains(term));
+        }
+
+        return await available
+            .OrderBy(a => a.Deadline)
+            .Select(ToStudentDto(studentId))
+            .ToPagedResultAsync(query, cancellationToken);
+    }
+
+    public async Task<StudentAssignmentDto> GetForStudentAsync(
+        Guid id, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+
+        var assignment = await LoadAsync(id, cancellationToken);
+
+        // Rule 1: a draft or archived assignment is answered as though it does not exist.
+        // A 403 here would confirm that an assignment with this id is being prepared,
+        // which is exactly what "students never see drafts" is meant to prevent.
+        if (!AssignmentStatusPolicy.IsVisibleToStudents(assignment.Status))
+        {
+            throw new NotFoundException("Assignment", id);
+        }
+
+        // Rule 2: the assignment exists and is published, but belongs to another class.
+        await _authorizer.EnsureStudentEnrolledInClassAsync(
+            studentId, assignment.ClassCourseId, cancellationToken);
+
+        return await _db.Assignments
+            .AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(ToStudentDto(studentId))
+            .SingleAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Projection including the calling student's own submission state. Built as an
+    /// expression over a captured id so EF can translate the correlated lookup into the
+    /// same SELECT rather than issuing one query per row.
+    /// </summary>
+    private static System.Linq.Expressions.Expression<Func<Assignment, StudentAssignmentDto>>
+        ToStudentDto(Guid studentId) =>
+        a => new StudentAssignmentDto(
+            a.Id,
+            a.Title,
+            a.Description,
+            a.Deadline,
+            a.MaxMarks,
+            a.ClassCourseId,
+            a.ClassCourse.Code,
+            a.SubjectId,
+            a.Subject.Name,
+            a.CreatedByTeacher.FullName,
+            a.AllowLateSubmission,
+            a.AllowUpdateBeforeDeadline,
+            a.Submissions.Any(s => s.StudentId == studentId),
+            a.Submissions.Where(s => s.StudentId == studentId)
+                .Select(s => (Guid?)s.Id).FirstOrDefault(),
+            a.Submissions.Where(s => s.StudentId == studentId)
+                .Select(s => (SubmissionStatus?)s.Status).FirstOrDefault(),
+            a.Submissions.Where(s => s.StudentId == studentId)
+                .Select(s => s.Marks).FirstOrDefault());
 
     // ---------------------------------------------------------------------------------
     // Writes

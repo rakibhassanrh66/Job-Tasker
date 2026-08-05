@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
 // Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
 
+using AssignmentSystem.Application.Assignments;
 using AssignmentSystem.Application.Common;
 using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Application.Common.Models;
@@ -24,6 +25,21 @@ public interface ISubmissionService
 
     Task<SubmissionDto> ChangeStatusAsync(
         Guid id, ChangeSubmissionStatusRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates the calling student's submission for an assignment.</summary>
+    Task<SubmissionDto> SubmitAsync(
+        Guid assignmentId, CreateSubmissionRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Replaces the content of the calling student's own submission.</summary>
+    Task<SubmissionDto> UpdateAsync(
+        Guid id, UpdateSubmissionRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>The calling student's own submissions, with marks and feedback.</summary>
+    Task<PagedResult<SubmissionDto>> ListMineAsync(
+        SubmissionListQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>One of the calling student's own submissions.</summary>
+    Task<SubmissionDto> GetMineAsync(Guid id, CancellationToken cancellationToken = default);
 }
 
 public class SubmissionService : ISubmissionService
@@ -141,6 +157,188 @@ public class SubmissionService : ISubmissionService
     }
 
     // ---------------------------------------------------------------------------------
+    // Student — business rules 5, 6, 7 and 8
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Enforces, in order: the assignment is visible at all (rule 1), the student belongs
+    /// to its class (rule 2), they have not already submitted (rule 6), and the deadline
+    /// permits it (rule 5).
+    /// </summary>
+    public async Task<SubmissionDto> SubmitAsync(
+        Guid assignmentId, CreateSubmissionRequest request, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+
+        var assignment = await _db.Assignments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(a => a.Id == assignmentId, cancellationToken)
+            ?? throw new NotFoundException("Assignment", assignmentId);
+
+        // A draft is answered as not existing, so submitting to one cannot confirm that
+        // an unpublished assignment is being prepared.
+        if (!AssignmentStatusPolicy.IsVisibleToStudents(assignment.Status))
+        {
+            throw new NotFoundException("Assignment", assignmentId);
+        }
+
+        await _authorizer.EnsureStudentEnrolledInClassAsync(
+            studentId, assignment.ClassCourseId, cancellationToken);
+
+        // Rule 6. The unique index on (AssignmentId, StudentId) is the real guarantee —
+        // this check exists so the caller gets a 409 that explains itself rather than a
+        // database error, but the index is what closes the concurrent-request window.
+        var alreadySubmitted = await _db.Submissions.AnyAsync(
+            s => s.AssignmentId == assignmentId && s.StudentId == studentId, cancellationToken);
+
+        if (alreadySubmitted)
+        {
+            throw new DuplicateSubmissionException();
+        }
+
+        // Rule 5. Past the deadline the submission is either refused, or accepted and
+        // permanently marked Late — never accepted and quietly indistinguishable from
+        // work that arrived on time.
+        var now = _clock.UtcNow;
+        var isLate = assignment.IsPastDeadline(now);
+
+        if (isLate && !assignment.AllowLateSubmission)
+        {
+            throw SubmissionClosedException.DeadlinePassed();
+        }
+
+        var submission = new Submission
+        {
+            Id = Guid.NewGuid(),
+            AssignmentId = assignmentId,
+            StudentId = studentId,
+            AnswerText = request.AnswerText.Trim(),
+            AttachmentUrl = string.IsNullOrWhiteSpace(request.AttachmentUrl)
+                ? null
+                : request.AttachmentUrl.Trim(),
+            Status = isLate ? SubmissionStatus.Late : SubmissionStatus.Submitted,
+            SubmittedAt = now,
+            UpdatedAt = now
+        };
+
+        _db.Submissions.Add(submission);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Two concurrent submissions can both pass the check above; the unique index
+            // rejects the loser. Translated here so the caller sees the same 409 either
+            // way rather than a 500 that depends on timing.
+            //
+            // The check runs in the catch body rather than an exception filter because
+            // filters cannot await. It is re-thrown untouched if the conflict was
+            // something else, so a genuine database fault is not disguised as a duplicate.
+            if (await ExistsAsync(assignmentId, studentId, cancellationToken))
+            {
+                throw new DuplicateSubmissionException();
+            }
+
+            throw;
+        }
+
+        _logger.LogInformation(
+            "Student {StudentId} submitted to assignment {AssignmentId} with status {Status}.",
+            studentId, assignmentId, submission.Status);
+
+        return await ProjectAsync(submission.Id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Replaces submission content. Enforces ownership (rule 8) and the update window
+    /// (rule 7) — the assignment must permit updates, the deadline must not have passed,
+    /// and no teacher may have reviewed the work yet.
+    /// </summary>
+    public async Task<SubmissionDto> UpdateAsync(
+        Guid id, UpdateSubmissionRequest request, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+        var submission = await LoadWithAssignmentAsync(id, cancellationToken);
+
+        // Rule 8, before anything else — a student must not learn whether another
+        // student's submission is still editable.
+        _authorizer.EnsureStudentOwnsSubmission(studentId, submission);
+
+        // Grading closes the window early, whatever the deadline says. Marks and feedback
+        // must always describe the content that was graded — letting a student replace an
+        // answer afterwards would leave a teacher's 92/100 attached to work nobody read.
+        // Checked before the deadline so the caller gets the specific reason.
+        if (submission.Status is not (SubmissionStatus.Submitted or SubmissionStatus.Late))
+        {
+            throw SubmissionClosedException.AlreadyGraded();
+        }
+
+        // Rule 7, both halves: the assignment must permit updates at all, and the deadline
+        // must not have passed. A late submission is past the deadline by definition, so
+        // it can never be edited afterwards.
+        if (!submission.Assignment.AllowUpdateBeforeDeadline)
+        {
+            throw SubmissionClosedException.UpdatesNotAllowed();
+        }
+
+        if (submission.Assignment.IsPastDeadline(_clock.UtcNow))
+        {
+            throw SubmissionClosedException.DeadlinePassed();
+        }
+
+        submission.AnswerText = request.AnswerText.Trim();
+        submission.AttachmentUrl = string.IsNullOrWhiteSpace(request.AttachmentUrl)
+            ? null
+            : request.AttachmentUrl.Trim();
+        submission.UpdatedAt = _clock.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return await ProjectAsync(id, cancellationToken);
+    }
+
+    public async Task<PagedResult<SubmissionDto>> ListMineAsync(
+        SubmissionListQuery query, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+
+        var mine = _db.Submissions
+            .AsNoTracking()
+            .Where(s => s.StudentId == studentId);
+
+        if (query.AssignmentId is not null)
+        {
+            mine = mine.Where(s => s.AssignmentId == query.AssignmentId);
+        }
+
+        if (query.Status is not null)
+        {
+            mine = mine.Where(s => s.Status == query.Status);
+        }
+
+        return await mine
+            .OrderByDescending(s => s.SubmittedAt)
+            .Select(Projections.ToSubmissionDto)
+            .ToPagedResultAsync(query, cancellationToken);
+    }
+
+    public async Task<SubmissionDto> GetMineAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var studentId = _currentUser.RequireUserId();
+        var submission = await LoadWithAssignmentAsync(id, cancellationToken);
+
+        _authorizer.EnsureStudentOwnsSubmission(studentId, submission);
+
+        return await ProjectAsync(id, cancellationToken);
+    }
+
+    // ---------------------------------------------------------------------------------
+
+    private Task<bool> ExistsAsync(Guid assignmentId, Guid studentId, CancellationToken cancellationToken) =>
+        _db.Submissions.AnyAsync(
+            s => s.AssignmentId == assignmentId && s.StudentId == studentId, cancellationToken);
 
     private async Task<Submission> LoadWithAssignmentAsync(
         Guid id, CancellationToken cancellationToken) =>

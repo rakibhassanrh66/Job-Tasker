@@ -4,8 +4,11 @@
 using AssignmentSystem.Api.Authorization;
 using AssignmentSystem.Application.Assignments;
 using AssignmentSystem.Application.Assignments.Dtos;
+using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Application.Common.Models;
+using AssignmentSystem.Application.Submissions;
 using AssignmentSystem.Application.Submissions.Dtos;
+using AssignmentSystem.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -138,5 +141,75 @@ public class AssignmentsController : ControllerBase
         Guid id, [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _assignments.ListSubmissionsAsync(id, query, cancellationToken));
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Student
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Lists published assignments for the classes the calling student is enrolled in.
+    /// Drafts and archived assignments never appear here, and neither do assignments
+    /// belonging to other classes.
+    /// </summary>
+    [HttpGet("available")]
+    [Authorize(Roles = Roles.Student)]
+    [ProducesResponseType(typeof(PagedResult<StudentAssignmentDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PagedResult<StudentAssignmentDto>>> ListAvailable(
+        [FromQuery] AssignmentListQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _assignments.ListAvailableAsync(query, cancellationToken));
+    }
+
+    /// <summary>
+    /// Fetches one assignment, shaped for the calling role.
+    /// </summary>
+    /// <remarks>
+    /// A student receives a <c>StudentAssignmentDto</c> — their own submission state, and
+    /// neither the submission count nor the authoring teacher's id. A teacher or an admin
+    /// receives an <c>AssignmentDto</c>, which carries both. Two shapes on one route, so
+    /// the response schema below describes the student case only; the M6 Swagger pass
+    /// splits them properly.
+    /// </remarks>
+    /// <response code="403">A student is not enrolled in the assignment's class, or a teacher does not own it.</response>
+    /// <response code="404">No such assignment, or the caller is a student and it is not published.</response>
+    [HttpGet("{id:guid}")]
+    [Authorize]
+    [ProducesResponseType(typeof(StudentAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetById(
+        Guid id,
+        [FromServices] ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        // Identity comes from the token, never the route.
+        return currentUser.Role == UserRole.Student
+            ? Ok(await _assignments.GetForStudentAsync(id, cancellationToken))
+            : Ok(await _assignments.GetByIdAsync(id, cancellationToken));
+    }
+
+    /// <summary>Submits the calling student's answer for an assignment.</summary>
+    /// <response code="201">Submitted. Status is Late if the deadline had passed and late work is allowed.</response>
+    /// <response code="403">The student is not enrolled in the assignment's class.</response>
+    /// <response code="404">No such assignment, or it is not published.</response>
+    /// <response code="409">Already submitted, or the deadline has passed and late work is not allowed.</response>
+    [HttpPost("{id:guid}/submit")]
+    [Authorize(Roles = Roles.Student)]
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<SubmissionDto>> Submit(
+        Guid id,
+        [FromBody] CreateSubmissionRequest request,
+        [FromServices] ISubmissionService submissions,
+        CancellationToken cancellationToken)
+    {
+        var created = await submissions.SubmitAsync(id, request, cancellationToken);
+
+        return Created($"/api/v1/submissions/{created.Id}", created);
     }
 }

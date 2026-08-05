@@ -255,6 +255,54 @@ public class TeacherModuleTests
     }
 
     // ---------------------------------------------------------------------------------
+    // GET /assignments/{id} — one route, shaped per role
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Teacher_Can_Fetch_Their_Own_Assignment_By_Id()
+    {
+        var teacher = await _factory.AsTeacherAsync();
+        var owned = await CreateAssignmentAsync(teacher, "Mine to read");
+
+        var response = await teacher.GetAsync($"/api/v1/assignments/{owned.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var fetched = await response.Content.ReadFromJsonAsync<AssignmentDto>();
+
+        fetched!.Id.Should().Be(owned.Id);
+        fetched.Status.Should().Be(AssignmentStatus.Draft,
+            "a teacher reaches their own drafts, where a student would get a 404");
+    }
+
+    [Fact]
+    public async Task Teacher_Fetching_Another_Teachers_Assignment_By_Id_Returns_403()
+    {
+        var teacher1 = await _factory.AsTeacherAsync();
+        var otherTeachersAssignment = await MathAssignmentIdAsync();
+
+        var response = await teacher1.GetAsync($"/api/v1/assignments/{otherTeachersAssignment}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "rule 4 governs reads as well as writes");
+    }
+
+    [Fact]
+    public async Task Admin_Can_Fetch_Any_Assignment_By_Id()
+    {
+        var admin = await _factory.AsAdminAsync();
+        var anyAssignment = await MathAssignmentIdAsync();
+
+        var response = await admin.GetAsync($"/api/v1/assignments/{anyAssignment}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "reaching any assignment is the whole point of administrative oversight");
+
+        var fetched = await response.Content.ReadFromJsonAsync<AssignmentDto>();
+        fetched!.Id.Should().Be(anyAssignment);
+    }
+
+    // ---------------------------------------------------------------------------------
     // Business rule 9 — marks bounds
     // ---------------------------------------------------------------------------------
 
@@ -454,6 +502,14 @@ public class TeacherModuleTests
             SubjectId: subjectId,
             AllowLateSubmission: false,
             AllowUpdateBeforeDeadline: true);
+
+    /// <summary>A seeded assignment in MATH-201, which belongs to teacher2 — so it is
+    /// provably not teacher1's.</summary>
+    private Task<Guid> MathAssignmentIdAsync() =>
+        _factory.WithDbAsync(db => db.Assignments
+            .Where(a => a.ClassCourse.Code == "MATH-201")
+            .Select(a => a.Id)
+            .FirstAsync());
 
     private async Task<(Guid SubjectId, Guid ClassId)> SubjectAndClassAsync(string subjectCode)
     {

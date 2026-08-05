@@ -78,4 +78,52 @@ public class SubmissionsController : ControllerBase
     {
         return Ok(await _submissions.ChangeStatusAsync(id, request, cancellationToken));
     }
+
+    // ---------------------------------------------------------------------------------
+    // Student
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Lists the calling student's own submissions, with status, marks and feedback.
+    /// </summary>
+    [HttpGet("mine")]
+    [Authorize(Roles = Roles.Student)]
+    [ProducesResponseType(typeof(PagedResult<SubmissionDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PagedResult<SubmissionDto>>> ListMine(
+        [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _submissions.ListMineAsync(query, cancellationToken));
+    }
+
+    /// <summary>Fetches one of the calling student's own submissions.</summary>
+    /// <response code="403">The submission belongs to another student.</response>
+    [HttpGet("{id:guid}")]
+    [Authorize(Roles = Roles.Student)]
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SubmissionDto>> GetMine(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _submissions.GetMineAsync(id, cancellationToken));
+    }
+
+    /// <summary>
+    /// Replaces the content of the calling student's own submission. Permitted only while
+    /// the assignment allows updates and the deadline has not passed.
+    /// </summary>
+    /// <response code="403">The submission belongs to another student.</response>
+    /// <response code="409">Updates are not allowed, or the deadline has passed.</response>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = Roles.Student)]
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<SubmissionDto>> Update(
+        Guid id, [FromBody] UpdateSubmissionRequest request, CancellationToken cancellationToken)
+    {
+        return Ok(await _submissions.UpdateAsync(id, request, cancellationToken));
+    }
 }
