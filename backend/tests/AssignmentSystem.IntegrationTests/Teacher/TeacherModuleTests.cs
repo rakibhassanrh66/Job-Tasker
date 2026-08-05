@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using AssignmentSystem.Application.Assignments.Dtos;
 using AssignmentSystem.Application.Common.Models;
 using AssignmentSystem.Application.Submissions.Dtos;
+using AssignmentSystem.Application.TeacherAssignments;
 using AssignmentSystem.Domain.Entities;
 using AssignmentSystem.Domain.Enums;
 using AssignmentSystem.IntegrationTests.Infrastructure;
@@ -252,6 +253,45 @@ public class TeacherModuleTests
 
         mine!.Items.Should().NotBeEmpty();
         mine.Items.Should().OnlyContain(a => a.CreatedByTeacherId == teacher2Id);
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Reading one's own allocations
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Teacher_Sees_Only_Their_Own_Allocations_In_Mine()
+    {
+        var teacher2 = await _factory.AuthenticatedClientAsync(
+            ApiClientExtensions.SecondTeacherEmail, ApiClientExtensions.TeacherPassword);
+
+        var mine = await teacher2.GetFromJsonAsync<PagedResult<TeacherAssignmentDto>>(
+            "/api/v1/teacher-assignments/mine?pageSize=100");
+
+        var teacher2Id = await _factory.WithDbAsync(db => db.Users
+            .Where(u => u.Email == ApiClientExtensions.SecondTeacherEmail)
+            .Select(u => u.Id)
+            .SingleAsync());
+
+        mine!.Items.Should().NotBeEmpty();
+        mine.Items.Should().OnlyContain(a => a.TeacherId == teacher2Id);
+    }
+
+    [Fact]
+    public async Task Allocations_Mine_Ignores_A_TeacherId_Supplied_By_The_Caller()
+    {
+        var teacher1 = await _factory.AsTeacherAsync();
+
+        var teacher2Id = await _factory.WithDbAsync(db => db.Users
+            .Where(u => u.Email == ApiClientExtensions.SecondTeacherEmail)
+            .Select(u => u.Id)
+            .SingleAsync());
+
+        var mine = await teacher1.GetFromJsonAsync<PagedResult<TeacherAssignmentDto>>(
+            $"/api/v1/teacher-assignments/mine?teacherId={teacher2Id}&pageSize=100");
+
+        mine!.Items.Should().NotContain(a => a.TeacherId == teacher2Id,
+            "the scope comes from the token, so a teacherId in the query cannot widen it");
     }
 
     // ---------------------------------------------------------------------------------

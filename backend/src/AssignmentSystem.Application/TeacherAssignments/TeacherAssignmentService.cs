@@ -33,6 +33,16 @@ public interface ITeacherAssignmentService
     Task<PagedResult<TeacherAssignmentDto>> ListAsync(
         TeacherAssignmentListQuery query, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The calling teacher's own allocations — the (subject, class) pairs they may set work
+    /// in. Everything else on this controller is admin-only because this table is the input
+    /// to rule 3, but a teacher has to be able to read their own row: without it there is no
+    /// way for them to discover which subject and class to create an assignment against,
+    /// since the subject and class catalogues are themselves admin-only.
+    /// </summary>
+    Task<PagedResult<TeacherAssignmentDto>> ListMineAsync(
+        TeacherAssignmentListQuery query, CancellationToken cancellationToken = default);
+
     Task<TeacherAssignmentDto> CreateAsync(
         CreateTeacherAssignmentRequest request, CancellationToken cancellationToken = default);
 
@@ -47,11 +57,13 @@ public interface ITeacherAssignmentService
 public class TeacherAssignmentService : ITeacherAssignmentService
 {
     private readonly IAppDbContext _db;
+    private readonly ICurrentUser _currentUser;
     private readonly IClock _clock;
 
-    public TeacherAssignmentService(IAppDbContext db, IClock clock)
+    public TeacherAssignmentService(IAppDbContext db, ICurrentUser currentUser, IClock clock)
     {
         _db = db;
+        _currentUser = currentUser;
         _clock = clock;
     }
 
@@ -65,6 +77,28 @@ public class TeacherAssignmentService : ITeacherAssignmentService
             allocations = allocations.Where(t => t.TeacherId == query.TeacherId);
         }
 
+        return await ProjectAsync(allocations, query, cancellationToken);
+    }
+
+    public async Task<PagedResult<TeacherAssignmentDto>> ListMineAsync(
+        TeacherAssignmentListQuery query, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+
+        // Scoped in SQL from the token, not from the query — a TeacherId supplied by the
+        // caller is ignored here rather than trusted.
+        var mine = _db.TeacherAssignments
+            .AsNoTracking()
+            .Where(t => t.TeacherId == teacherId);
+
+        return await ProjectAsync(mine, query, cancellationToken);
+    }
+
+    private static async Task<PagedResult<TeacherAssignmentDto>> ProjectAsync(
+        IQueryable<TeacherAssignment> allocations,
+        TeacherAssignmentListQuery query,
+        CancellationToken cancellationToken)
+    {
         if (query.ClassCourseId is not null)
         {
             allocations = allocations.Where(t => t.ClassCourseId == query.ClassCourseId);

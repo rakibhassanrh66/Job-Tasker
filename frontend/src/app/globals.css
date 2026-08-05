@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/*
+ * Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
+ * Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
+ */
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+/* Dark mode follows the OS. There is no in-app theme switch: it would be one more piece
+   of state to persist and test, and nothing in the brief asks for it. */

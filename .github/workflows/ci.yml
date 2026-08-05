@@ -51,5 +51,51 @@ jobs:
           path: ./TestResults
           retention-days: 7
 
-  # The frontend and compose-build jobs land with M8. Adding them here would put main red
-  # against a frontend/ that currently holds only a Dockerfile.
+  frontend:
+    name: Frontend lint + build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: frontend
+
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Type check
+        run: npm run typecheck
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+        env:
+          # Inlined into the bundle at build time. A placeholder is correct here — CI is
+          # proving the app compiles, not talking to a real API.
+          NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  docker:
+    name: Compose build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves both images still build from a clean checkout, which is how an evaluator
+      # first runs this project. Build only — running the stack is verified locally.
+      - name: Build images
+        run: docker compose build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1

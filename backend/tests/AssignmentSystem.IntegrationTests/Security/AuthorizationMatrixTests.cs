@@ -73,6 +73,9 @@ public class AuthorizationMatrixTests
     [InlineData("GET", "/api/v1/teacher-assignments", "Admin")]
     [InlineData("POST", "/api/v1/teacher-assignments", "Admin")]
     [InlineData("DELETE", "/api/v1/teacher-assignments/{id}", "Admin")]
+    // The one action on this controller that is not admin-only: a teacher reading their
+    // own allocations, which is how they discover where they may set work.
+    [InlineData("GET", "/api/v1/teacher-assignments/mine", "Teacher")]
 
     // ---- Enrolments (admin) --------------------------------------------------------
     [InlineData("GET", "/api/v1/enrollments", "Admin")]
