@@ -254,6 +254,10 @@ await DatabaseInitializer.InitialiseAsync(app.Services);
 // logs every domain rejection at Warning and every unhandled fault at Error.
 app.UseSerilogRequestLogging();
 
+// Before the exception middleware, so an error response is hardened too — a 500 is exactly
+// the kind of response you do not want sniffed or framed.
+app.UseMiddleware<SecurityHeadersMiddleware>();
+
 // Catches anything thrown further down the pipeline.
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<BuildSignatureMiddleware>();

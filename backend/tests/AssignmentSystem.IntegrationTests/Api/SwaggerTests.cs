@@ -130,6 +130,37 @@ public class SwaggerTests
     }
 
     [Fact]
+    public async Task Api_Responses_Carry_The_Hardening_Headers()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/v1/meta");
+
+        response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
+        response.Headers.GetValues("X-Frame-Options").Should().Contain("DENY");
+        response.Headers.GetValues("Referrer-Policy").Should().Contain("no-referrer");
+
+        response.Headers.GetValues("Content-Security-Policy").Single()
+            .Should().Be("default-src 'none'; frame-ancestors 'none'",
+                "a JSON response needs to load nothing, so the strictest policy applies");
+    }
+
+    [Fact]
+    public async Task Swagger_Ui_Gets_A_Policy_That_Lets_It_Actually_Render()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/swagger/index.html");
+
+        var policy = response.Headers.GetValues("Content-Security-Policy").Single();
+
+        // Swashbuckle emits an inline bootstrap script. Under the API's default-src 'none'
+        // the docs page would load and then show nothing at all.
+        policy.Should().Contain("script-src 'self' 'unsafe-inline'");
+        policy.Should().Contain("frame-ancestors 'none'");
+    }
+
+    [Fact]
     public async Task Swagger_Document_Includes_The_Auth_And_Meta_Routes()
     {
         var client = _factory.CreateClient();
