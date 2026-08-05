@@ -5,28 +5,65 @@ using AssignmentSystem.Application.Assignments.Dtos;
 using AssignmentSystem.Application.Common;
 using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Application.Common.Models;
+using AssignmentSystem.Application.Submissions.Dtos;
 using AssignmentSystem.Domain.Entities;
+using AssignmentSystem.Domain.Enums;
+using AssignmentSystem.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace AssignmentSystem.Application.Assignments;
 
-public partial interface IAssignmentService
+public interface IAssignmentService
 {
-    /// <summary>
-    /// Unfiltered listing for administrative oversight. Deliberately not scoped by class
-    /// or status — the admin role is the only caller, and the point is visibility across
-    /// the whole system. Teacher and student listings are separate methods with their own
-    /// scoping, so this one can never be reached with a lesser role by mistake.
-    /// </summary>
+    /// <summary>Unfiltered listing for administrative oversight.</summary>
     Task<PagedResult<AssignmentDto>> ListAllAsync(
         AssignmentListQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>Assignments created by the calling teacher, at any status.</summary>
+    Task<PagedResult<AssignmentDto>> ListMineAsync(
+        AssignmentListQuery query, CancellationToken cancellationToken = default);
+
+    Task<AssignmentDto> CreateAsync(
+        CreateAssignmentRequest request, CancellationToken cancellationToken = default);
+
+    Task<AssignmentDto> UpdateAsync(
+        Guid id, UpdateAssignmentRequest request, CancellationToken cancellationToken = default);
+
+    Task DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
+    Task<AssignmentDto> PublishAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>Submissions for one of the calling teacher's own assignments.</summary>
+    Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
+        Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default);
 }
 
-public partial class AssignmentService : IAssignmentService
+public class AssignmentService : IAssignmentService
 {
     private readonly IAppDbContext _db;
+    private readonly ICurrentUser _currentUser;
+    private readonly IResourceAuthorizer _authorizer;
+    private readonly IClock _clock;
+    private readonly ILogger<AssignmentService> _logger;
 
-    public AssignmentService(IAppDbContext db) => _db = db;
+    public AssignmentService(
+        IAppDbContext db,
+        ICurrentUser currentUser,
+        IResourceAuthorizer authorizer,
+        IClock clock,
+        ILogger<AssignmentService> logger)
+    {
+        _db = db;
+        _currentUser = currentUser;
+        _authorizer = authorizer;
+        _clock = clock;
+        _logger = logger;
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Reads
+    // ---------------------------------------------------------------------------------
 
     public async Task<PagedResult<AssignmentDto>> ListAllAsync(
         AssignmentListQuery query, CancellationToken cancellationToken = default)
@@ -36,6 +73,197 @@ public partial class AssignmentService : IAssignmentService
             .Select(Projections.ToAssignmentDto)
             .ToPagedResultAsync(query, cancellationToken);
     }
+
+    public async Task<PagedResult<AssignmentDto>> ListMineAsync(
+        AssignmentListQuery query, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+
+        // Scoped in SQL rather than fetched then filtered: the teacher's own assignments
+        // are the only rows that ever leave the database.
+        var mine = _db.Assignments
+            .AsNoTracking()
+            .Where(a => a.CreatedByTeacherId == teacherId);
+
+        return await ApplyFilters(mine, query)
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(Projections.ToAssignmentDto)
+            .ToPagedResultAsync(query, cancellationToken);
+    }
+
+    public async Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
+        Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+
+        var assignment = await LoadAsync(assignmentId, cancellationToken);
+
+        // Business rule 4. Checked after the entity is loaded and before anything is
+        // returned, so a teacher cannot read another teacher's submissions by id.
+        _authorizer.EnsureTeacherOwnsAssignment(teacherId, assignment);
+
+        var submissions = _db.Submissions
+            .AsNoTracking()
+            .Where(s => s.AssignmentId == assignmentId);
+
+        if (query.Status is not null)
+        {
+            submissions = submissions.Where(s => s.Status == query.Status);
+        }
+
+        if (query.StudentId is not null)
+        {
+            submissions = submissions.Where(s => s.StudentId == query.StudentId);
+        }
+
+        return await submissions
+            .OrderBy(s => s.Student.FullName)
+            .Select(Projections.ToSubmissionDto)
+            .ToPagedResultAsync(query, cancellationToken);
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Writes
+    // ---------------------------------------------------------------------------------
+
+    public async Task<AssignmentDto> CreateAsync(
+        CreateAssignmentRequest request, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+
+        var subject = await _db.Subjects
+            .AsNoTracking()
+            .SingleOrDefaultAsync(s => s.Id == request.SubjectId, cancellationToken)
+            ?? throw new NotFoundException("Subject", request.SubjectId);
+
+        if (subject.ClassCourseId != request.ClassCourseId)
+        {
+            throw new ValidationFailedException(
+                nameof(request.SubjectId),
+                "That subject does not belong to the specified class.");
+        }
+
+        // Business rule 3. The teacher must hold an allocation for this exact
+        // (subject, class) pair; holding one for the same subject in another class is not
+        // enough. Throws 403 otherwise.
+        await _authorizer.EnsureTeacherTeachesSubjectInClassAsync(
+            teacherId, request.SubjectId, request.ClassCourseId, cancellationToken);
+
+        var now = _clock.UtcNow;
+
+        var assignment = new Assignment
+        {
+            Id = Guid.NewGuid(),
+            Title = request.Title.Trim(),
+            Description = request.Description.Trim(),
+            Deadline = request.Deadline,
+            MaxMarks = request.MaxMarks,
+
+            // Always created as a Draft. Publishing is a separate, deliberate act, which
+            // is what makes business rule 1 meaningful — a half-written assignment cannot
+            // reach students by accident.
+            Status = AssignmentStatus.Draft,
+
+            ClassCourseId = request.ClassCourseId,
+            SubjectId = request.SubjectId,
+            CreatedByTeacherId = teacherId,
+            AllowLateSubmission = request.AllowLateSubmission,
+            AllowUpdateBeforeDeadline = request.AllowUpdateBeforeDeadline,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        _db.Assignments.Add(assignment);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Teacher {TeacherId} created draft assignment {AssignmentId}.", teacherId, assignment.Id);
+
+        return await ProjectAsync(assignment.Id, cancellationToken);
+    }
+
+    public async Task<AssignmentDto> UpdateAsync(
+        Guid id, UpdateAssignmentRequest request, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+        var assignment = await LoadAsync(id, cancellationToken);
+
+        _authorizer.EnsureTeacherOwnsAssignment(teacherId, assignment);
+
+        assignment.Title = request.Title.Trim();
+        assignment.Description = request.Description.Trim();
+        assignment.Deadline = request.Deadline;
+        assignment.MaxMarks = request.MaxMarks;
+        assignment.AllowLateSubmission = request.AllowLateSubmission;
+        assignment.AllowUpdateBeforeDeadline = request.AllowUpdateBeforeDeadline;
+        assignment.UpdatedAt = _clock.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return await ProjectAsync(id, cancellationToken);
+    }
+
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+        var assignment = await LoadAsync(id, cancellationToken);
+
+        _authorizer.EnsureTeacherOwnsAssignment(teacherId, assignment);
+
+        // Deleting an assignment cascades to its submissions, so work students have
+        // already handed in would go with it. Refused once anything has been submitted.
+        var hasSubmissions = await _db.Submissions
+            .AnyAsync(s => s.AssignmentId == id, cancellationToken);
+
+        if (hasSubmissions)
+        {
+            throw new ResourceInUseException(
+                "This assignment cannot be deleted because students have already submitted to it. "
+                + "Archive it instead.");
+        }
+
+        _db.Assignments.Remove(assignment);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Teacher {TeacherId} deleted assignment {AssignmentId}.", teacherId, id);
+    }
+
+    public async Task<AssignmentDto> PublishAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var teacherId = _currentUser.RequireUserId();
+        var assignment = await LoadAsync(id, cancellationToken);
+
+        _authorizer.EnsureTeacherOwnsAssignment(teacherId, assignment);
+
+        // Business rule 11. Only a Draft can be published; publishing something already
+        // Published, or Archived, is a 409 rather than a quiet no-op — the caller should
+        // learn that nothing changed.
+        AssignmentStatusPolicy.EnsureCanPublish(assignment.Status);
+
+        assignment.Status = AssignmentStatus.Published;
+        assignment.UpdatedAt = _clock.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Teacher {TeacherId} published assignment {AssignmentId}.", teacherId, id);
+
+        return await ProjectAsync(id, cancellationToken);
+    }
+
+    // ---------------------------------------------------------------------------------
+
+    private async Task<Assignment> LoadAsync(Guid id, CancellationToken cancellationToken) =>
+        await _db.Assignments.SingleOrDefaultAsync(a => a.Id == id, cancellationToken)
+        ?? throw new NotFoundException("Assignment", id);
+
+    private async Task<AssignmentDto> ProjectAsync(Guid id, CancellationToken cancellationToken) =>
+        await _db.Assignments
+            .AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(Projections.ToAssignmentDto)
+            .SingleAsync(cancellationToken);
 
     private static IQueryable<Assignment> ApplyFilters(
         IQueryable<Assignment> assignments, AssignmentListQuery query)

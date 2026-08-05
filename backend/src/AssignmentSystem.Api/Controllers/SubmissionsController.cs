@@ -10,9 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace AssignmentSystem.Api.Controllers;
 
-/// <summary>
-/// Submissions. Serves all three roles, so the role gate is per action.
-/// </summary>
+/// <summary>Submissions. Serves all three roles, so the role gate is per action.</summary>
 [ApiController]
 [Route("api/v1/submissions")]
 [Produces("application/json")]
@@ -23,9 +21,11 @@ public class SubmissionsController : ControllerBase
 
     public SubmissionsController(ISubmissionService submissions) => _submissions = submissions;
 
-    /// <summary>
-    /// Lists every submission in the system, for administrative oversight. Read-only.
-    /// </summary>
+    // ---------------------------------------------------------------------------------
+    // Admin
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>Lists every submission in the system, for administrative oversight.</summary>
     /// <response code="403">The caller is not an administrator.</response>
     [HttpGet]
     [Authorize(Roles = Roles.Admin)]
@@ -36,5 +36,46 @@ public class SubmissionsController : ControllerBase
         [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _submissions.ListAllAsync(query, cancellationToken));
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Teacher
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Records marks and feedback, moving the submission to Graded.
+    ///
+    /// Accepts a submission that is Submitted, Late or UnderReview — entering marks is
+    /// itself the review, so passing through UnderReview first is optional.
+    /// </summary>
+    /// <response code="403">The submission belongs to another teacher's assignment.</response>
+    /// <response code="409">The submission is not in a gradeable state.</response>
+    /// <response code="422">Marks fall outside 0 to the assignment's maximum.</response>
+    [HttpPut("{id:guid}/grade")]
+    [Authorize(Roles = Roles.Teacher)]
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<SubmissionDto>> Grade(
+        Guid id, [FromBody] GradeSubmissionRequest request, CancellationToken cancellationToken)
+    {
+        return Ok(await _submissions.GradeAsync(id, request, cancellationToken));
+    }
+
+    /// <summary>Moves a submission through the review lifecycle explicitly.</summary>
+    /// <response code="403">The submission belongs to another teacher's assignment.</response>
+    /// <response code="409">That transition is not permitted from the current status.</response>
+    [HttpPut("{id:guid}/status")]
+    [Authorize(Roles = Roles.Teacher)]
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<SubmissionDto>> ChangeStatus(
+        Guid id, [FromBody] ChangeSubmissionStatusRequest request, CancellationToken cancellationToken)
+    {
+        return Ok(await _submissions.ChangeStatusAsync(id, request, cancellationToken));
     }
 }
