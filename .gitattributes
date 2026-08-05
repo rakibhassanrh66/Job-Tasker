@@ -1,0 +1,35 @@
+# Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
+# Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
+
+# Normalise all text to LF in the repository; Git may still check out CRLF on
+# Windows for ordinary source files.
+* text=auto
+
+# These are consumed by Linux containers and shells. CRLF endings break them
+# (`/bin/sh^M: bad interpreter`), so force LF in the working tree everywhere.
+Dockerfile      text eol=lf
+*.dockerfile    text eol=lf
+.dockerignore   text eol=lf
+docker-compose*.yml text eol=lf
+*.sh            text eol=lf
+Makefile        text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Keep C#/TS/config as text, normalised in the repo.
+*.cs    text diff=csharp
+*.csproj text
+*.sln   text
+*.props text
+*.ts    text
+*.tsx   text
+*.js    text
+*.json  text
+*.md    text
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pfx binary
+*.dll binary
