@@ -38,8 +38,10 @@ public interface ISubmissionService
     Task<PagedResult<SubmissionDto>> ListMineAsync(
         StudentSubmissionListQuery query, CancellationToken cancellationToken = default);
 
-    /// <summary>One of the calling student's own submissions.</summary>
-    Task<SubmissionDto> GetMineAsync(Guid id, CancellationToken cancellationToken = default);
+    /// <summary>One submission, reached by whichever role is asking. A student may reach
+    /// their own (rule 8), a teacher one on an assignment they created (rule 4), and an
+    /// admin any.</summary>
+    Task<SubmissionDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 }
 
 public class SubmissionService : ISubmissionService
@@ -324,12 +326,23 @@ public class SubmissionService : ISubmissionService
             .ToPagedResultAsync(query, cancellationToken);
     }
 
-    public async Task<SubmissionDto> GetMineAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<SubmissionDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var studentId = _currentUser.RequireUserId();
         var submission = await LoadWithAssignmentAsync(id, cancellationToken);
 
-        _authorizer.EnsureStudentOwnsSubmission(studentId, submission);
+        // Each role reaches this row for a different reason, and each reason is a different
+        // rule. An admin has neither gate, which is what oversight means.
+        switch (_currentUser.Role)
+        {
+            case UserRole.Student:
+                _authorizer.EnsureStudentOwnsSubmission(_currentUser.RequireUserId(), submission);
+                break;
+
+            case UserRole.Teacher:
+                _authorizer.EnsureTeacherOwnsAssignment(
+                    _currentUser.RequireUserId(), submission.Assignment);
+                break;
+        }
 
         return await ProjectAsync(id, cancellationToken);
     }

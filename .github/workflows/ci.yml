@@ -1,7 +1,5 @@
 # Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
 # Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
-#
-# Stub — completed in M7 (coverage upload, frontend job, integration test wiring).
 
 name: CI
 
@@ -16,20 +14,10 @@ jobs:
     name: Backend build + test
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: assignment_user
-          POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: assignment_system_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # No `services: postgres` here, deliberately. ApiFactory starts its own postgres:16
+    # through Testcontainers and overwrites ConnectionStrings__Default when it does, so a
+    # service container would sit unused while appearing to be what the tests run against.
+    # Docker is already present on GitHub-hosted runners, which is all Testcontainers needs.
 
     steps:
       - uses: actions/checkout@v4
@@ -46,9 +34,22 @@ jobs:
         run: dotnet build backend/AssignmentSystem.sln --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test backend/AssignmentSystem.sln --no-build --configuration Release --verbosity normal
-        env:
-          ConnectionStrings__Default: "Host=localhost;Port=5432;Database=assignment_system_test;Username=assignment_user;Password=ci_test_password"
-          Jwt__Key: "ci-only-test-key-not-a-secret-min-32-bytes-long!!"
-          Jwt__Issuer: "AssignmentSystem.Api"
-          Jwt__Audience: "AssignmentSystem.Client"
+        run: >-
+          dotnet test backend/AssignmentSystem.sln
+          --no-build
+          --configuration Release
+          --verbosity normal
+          --logger "trx;LogFileName=test-results.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: ./TestResults
+          retention-days: 7
+
+  # The frontend and compose-build jobs land with M8. Adding them here would put main red
+  # against a frontend/ that currently holds only a Dockerfile.
