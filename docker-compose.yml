@@ -5,9 +5,13 @@
 # Requires a .env file in this directory — copy .env.example and fill it in.
 
 services:
+  # No `container_name:` on any service, deliberately. A fixed name is global to the Docker
+  # daemon, so a second copy of this stack — a clean clone checked out to verify the setup
+  # instructions, say — collides with the first and refuses to start. Worse, a *stopped*
+  # container keeps holding the name. Letting compose derive names from the project keeps
+  # copies independent.
   db:
     image: postgres:16
-    container_name: assignment_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -29,7 +33,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: assignment_api
     restart: unless-stopped
     depends_on:
       db:
@@ -54,7 +57,6 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-    container_name: assignment_web
     restart: unless-stopped
     depends_on:
       - api
