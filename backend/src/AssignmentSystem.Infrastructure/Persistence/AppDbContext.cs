@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
 // Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
 
+using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace AssignmentSystem.Infrastructure.Persistence;
 
-public class AppDbContext : DbContext
+public class AppDbContext : DbContext, IAppDbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {

@@ -27,8 +27,30 @@ public static class DependencyInjection
             options.UseNpgsql(connectionString, npgsql =>
                 npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
 
+        // The Application layer depends on the interface; both resolve to the same scoped
+        // instance so a service and the authorizer share one unit of work.
+        services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
+        services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+
+        services.AddSingleton<IClock, SystemClock>();
         services.AddScoped<IPasswordHasher, PasswordHasherAdapter>();
+        services.AddScoped<ITokenService, JwtTokenService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Reads and validates the JWT settings during startup, so a missing or too-short
+    /// signing key stops the application immediately with a clear message rather than
+    /// surfacing later as tokens that cannot be validated.
+    /// </summary>
+    public static JwtOptions GetValidatedJwtOptions(this IConfiguration configuration)
+    {
+        var options = new JwtOptions();
+        configuration.GetSection(JwtOptions.SectionName).Bind(options);
+        options.Validate();
+
+        return options;
     }
 }
