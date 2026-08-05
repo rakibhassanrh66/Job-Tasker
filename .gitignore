@@ -1,0 +1,53 @@
+# ---- Secrets (never commit) ----
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+appsettings.Development.local.json
+appsettings.Production.json
+
+# ---- .NET ----
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+*.suo
+*.userprefs
+*.dll
+*.pdb
+*.cache
+TestResults/
+coverage/
+*.coverage
+*.trx
+*.opencover.xml
+.vs/
+
+# ---- Logs ----
+logs/
+*.log
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+.npm
+.eslintcache
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+
+# ---- Docker ----
+.docker/

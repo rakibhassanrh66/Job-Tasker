@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
+    Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
+
+    Applied to every project under backend/ so the authorship metadata is baked
+    into each built assembly from a single place.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- Authorship / provenance — compiled into the assembly manifest. -->
+  <PropertyGroup>
+    <Authors>Rakib Hassan</Authors>
+    <Company>Rakib Hassan (independent)</Company>
+    <Copyright>Copyright (c) 2026 Rakib Hassan. Evaluation licence — not for production use.</Copyright>
+    <Product>Assignment &amp; Submission System — candidacy evaluation build</Product>
+    <Description>Authored by Rakib Hassan for role evaluation. Canary 3e9662d8-a37a-4d73-af28-fd8f15e6f23c</Description>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+</Project>
