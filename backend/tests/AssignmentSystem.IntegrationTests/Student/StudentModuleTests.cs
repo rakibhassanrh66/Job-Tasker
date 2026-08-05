@@ -10,6 +10,7 @@ using AssignmentSystem.Domain.Entities;
 using AssignmentSystem.Domain.Enums;
 using AssignmentSystem.IntegrationTests.Infrastructure;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -385,6 +386,89 @@ public class StudentModuleTests
         after!.HasSubmitted.Should().BeTrue(
             "the list screen needs this to disable the submit button without a second request");
         after.SubmissionId.Should().NotBeNull();
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Filters — a student's routes accept only the filters they can honour
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Available_Can_Be_Filtered_By_Teacher()
+    {
+        var student = await _factory.AsStudentAsync();
+
+        var teacherId = await _factory.WithDbAsync(db => db.Users
+            .Where(u => u.Email == ApiClientExtensions.TeacherEmail)
+            .Select(u => u.Id)
+            .SingleAsync());
+
+        var filtered = await student.GetFromJsonAsync<PagedResult<StudentAssignmentDto>>(
+            $"/api/v1/assignments/available?teacherId={teacherId}&pageSize=100");
+
+        filtered!.Items.Should().NotBeEmpty();
+        filtered.Items.Should().OnlyContain(a => a.TeacherName == "Imran Chowdhury");
+    }
+
+    [Fact]
+    public async Task Available_Filtered_By_A_Teacher_Who_Teaches_Nothing_Here_Is_Empty()
+    {
+        var student = await _factory.AsStudentAsync();
+
+        // teacher2 teaches only in MATH-201, where this student is not enrolled. The
+        // filter narrows within the student's own scope; it cannot widen it.
+        var otherTeacherId = await _factory.WithDbAsync(db => db.Users
+            .Where(u => u.Email == ApiClientExtensions.SecondTeacherEmail)
+            .Select(u => u.Id)
+            .SingleAsync());
+
+        var filtered = await student.GetFromJsonAsync<PagedResult<StudentAssignmentDto>>(
+            $"/api/v1/assignments/available?teacherId={otherTeacherId}&pageSize=100");
+
+        filtered!.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Available_Rejects_A_Status_Filter_With_400()
+    {
+        var student = await _factory.AsStudentAsync();
+
+        var response = await student.GetAsync("/api/v1/assignments/available?status=Draft");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "answering 200 would imply the status filter had been applied, when a "
+            + "student's list is always Published");
+
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Title.Should().Be("Unknown query parameter");
+    }
+
+    [Fact]
+    public async Task MySubmissions_Rejects_A_StudentId_Filter_With_400()
+    {
+        var student = await _factory.AsStudentAsync();
+
+        var otherStudentId = await _factory.WithDbAsync(db => db.Users
+            .Where(u => u.Email == ApiClientExtensions.SecondStudentEmail)
+            .Select(u => u.Id)
+            .SingleAsync());
+
+        var response = await student.GetAsync(
+            $"/api/v1/submissions/mine?studentId={otherStudentId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "silently returning the caller's own work would look like the filter applied");
+    }
+
+    [Fact]
+    public async Task Available_Still_Accepts_The_Filters_It_Does_Support()
+    {
+        // The guard must not have made the supported filters unreachable.
+        var student = await _factory.AsStudentAsync();
+
+        var response = await student.GetAsync(
+            "/api/v1/assignments/available?search=a&page=1&pageSize=5");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ---------------------------------------------------------------------------------

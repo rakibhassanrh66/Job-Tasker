@@ -36,7 +36,9 @@ public interface IAssignmentService
 
     /// <summary>Submissions for one of the calling teacher's own assignments.</summary>
     Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
-        Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default);
+        Guid assignmentId,
+        AssignmentSubmissionListQuery query,
+        CancellationToken cancellationToken = default);
 
     /// <summary>One assignment for a teacher or an admin. A teacher may only reach their
     /// own (rule 4); an admin may reach any, which is the whole point of oversight.</summary>
@@ -44,7 +46,7 @@ public interface IAssignmentService
 
     /// <summary>Published assignments for the classes the calling student is enrolled in.</summary>
     Task<PagedResult<StudentAssignmentDto>> ListAvailableAsync(
-        AssignmentListQuery query, CancellationToken cancellationToken = default);
+        StudentAssignmentListQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>One assignment, as visible to the calling student.</summary>
     Task<StudentAssignmentDto> GetForStudentAsync(
@@ -120,7 +122,9 @@ public class AssignmentService : IAssignmentService
     }
 
     public async Task<PagedResult<SubmissionDto>> ListSubmissionsAsync(
-        Guid assignmentId, SubmissionListQuery query, CancellationToken cancellationToken = default)
+        Guid assignmentId,
+        AssignmentSubmissionListQuery query,
+        CancellationToken cancellationToken = default)
     {
         var teacherId = _currentUser.RequireUserId();
 
@@ -155,7 +159,7 @@ public class AssignmentService : IAssignmentService
     // ---------------------------------------------------------------------------------
 
     public async Task<PagedResult<StudentAssignmentDto>> ListAvailableAsync(
-        AssignmentListQuery query, CancellationToken cancellationToken = default)
+        StudentAssignmentListQuery query, CancellationToken cancellationToken = default)
     {
         var studentId = _currentUser.RequireUserId();
 
@@ -177,6 +181,11 @@ public class AssignmentService : IAssignmentService
         if (query.SubjectId is not null)
         {
             available = available.Where(a => a.SubjectId == query.SubjectId);
+        }
+
+        if (query.TeacherId is not null)
+        {
+            available = available.Where(a => a.CreatedByTeacherId == query.TeacherId);
         }
 
         if (!string.IsNullOrWhiteSpace(query.Search))

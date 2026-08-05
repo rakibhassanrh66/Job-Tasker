@@ -2,6 +2,8 @@
 // Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
 
 using AssignmentSystem.Api.Authorization;
+using AssignmentSystem.Api.Filters;
+using AssignmentSystem.Api.Swagger;
 using AssignmentSystem.Application.Assignments;
 using AssignmentSystem.Application.Assignments.Dtos;
 using AssignmentSystem.Application.Common.Interfaces;
@@ -43,6 +45,8 @@ public class AssignmentsController : ControllerBase
     [ProducesResponseType(typeof(PagedResult<AssignmentDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<AssignmentDto>>> ListAll(
         [FromQuery] AssignmentListQuery query, CancellationToken cancellationToken)
     {
@@ -58,6 +62,8 @@ public class AssignmentsController : ControllerBase
     [Authorize(Roles = Roles.Teacher)]
     [ProducesResponseType(typeof(PagedResult<AssignmentDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<AssignmentDto>>> ListMine(
         [FromQuery] AssignmentListQuery query, CancellationToken cancellationToken)
     {
@@ -137,8 +143,12 @@ public class AssignmentsController : ControllerBase
     [ProducesResponseType(typeof(PagedResult<SubmissionDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<SubmissionDto>>> ListSubmissions(
-        Guid id, [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
+        Guid id,
+        [FromQuery] AssignmentSubmissionListQuery query,
+        CancellationToken cancellationToken)
     {
         return Ok(await _assignments.ListSubmissionsAsync(id, query, cancellationToken));
     }
@@ -156,8 +166,10 @@ public class AssignmentsController : ControllerBase
     [Authorize(Roles = Roles.Student)]
     [ProducesResponseType(typeof(PagedResult<StudentAssignmentDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<StudentAssignmentDto>>> ListAvailable(
-        [FromQuery] AssignmentListQuery query, CancellationToken cancellationToken)
+        [FromQuery] StudentAssignmentListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _assignments.ListAvailableAsync(query, cancellationToken));
     }
@@ -168,15 +180,16 @@ public class AssignmentsController : ControllerBase
     /// <remarks>
     /// A student receives a <c>StudentAssignmentDto</c> — their own submission state, and
     /// neither the submission count nor the authoring teacher's id. A teacher or an admin
-    /// receives an <c>AssignmentDto</c>, which carries both. Two shapes on one route, so
-    /// the response schema below describes the student case only; the M6 Swagger pass
-    /// splits them properly.
+    /// receives an <c>AssignmentDto</c>, which carries both. The 200 is documented as a
+    /// <c>oneOf</c> over the two.
     /// </remarks>
     /// <response code="403">A student is not enrolled in the assignment's class, or a teacher does not own it.</response>
     /// <response code="404">No such assignment, or the caller is a student and it is not published.</response>
     [HttpGet("{id:guid}")]
     [Authorize]
     [ProducesResponseType(typeof(StudentAssignmentDto), StatusCodes.Status200OK)]
+    [ProducesAlternateResponse(
+        StatusCodes.Status200OK, typeof(StudentAssignmentDto), typeof(AssignmentDto))]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(

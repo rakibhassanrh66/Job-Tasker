@@ -36,7 +36,7 @@ public interface ISubmissionService
 
     /// <summary>The calling student's own submissions, with marks and feedback.</summary>
     Task<PagedResult<SubmissionDto>> ListMineAsync(
-        SubmissionListQuery query, CancellationToken cancellationToken = default);
+        StudentSubmissionListQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>One of the calling student's own submissions.</summary>
     Task<SubmissionDto> GetMineAsync(Guid id, CancellationToken cancellationToken = default);
@@ -300,7 +300,7 @@ public class SubmissionService : ISubmissionService
     }
 
     public async Task<PagedResult<SubmissionDto>> ListMineAsync(
-        SubmissionListQuery query, CancellationToken cancellationToken = default)
+        StudentSubmissionListQuery query, CancellationToken cancellationToken = default)
     {
         var studentId = _currentUser.RequireUserId();
 

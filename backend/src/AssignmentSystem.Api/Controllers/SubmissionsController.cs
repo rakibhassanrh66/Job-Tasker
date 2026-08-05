@@ -2,6 +2,7 @@
 // Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
 
 using AssignmentSystem.Api.Authorization;
+using AssignmentSystem.Api.Filters;
 using AssignmentSystem.Application.Common.Models;
 using AssignmentSystem.Application.Submissions;
 using AssignmentSystem.Application.Submissions.Dtos;
@@ -32,6 +33,8 @@ public class SubmissionsController : ControllerBase
     [ProducesResponseType(typeof(PagedResult<SubmissionDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<SubmissionDto>>> ListAll(
         [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
     {
@@ -90,8 +93,10 @@ public class SubmissionsController : ControllerBase
     [Authorize(Roles = Roles.Student)]
     [ProducesResponseType(typeof(PagedResult<SubmissionDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [RejectUnknownQueryParameters]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<SubmissionDto>>> ListMine(
-        [FromQuery] SubmissionListQuery query, CancellationToken cancellationToken)
+        [FromQuery] StudentSubmissionListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _submissions.ListMineAsync(query, cancellationToken));
     }

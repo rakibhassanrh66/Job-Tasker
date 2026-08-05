@@ -37,3 +37,25 @@ public class AssignmentListQuery : PagedQuery
 
     public string? Search { get; set; }
 }
+
+/// <summary>
+/// Filters a student may use on GET /assignments/available.
+///
+/// Deliberately not <see cref="AssignmentListQuery"/>. A student's list is always
+/// Published and always their own enrolled classes, so Status cannot mean anything here.
+/// Sharing the wider type would have Swagger advertise a status filter that the endpoint
+/// silently discards — the parameter does not exist on this route, so it should not exist
+/// on its query type either.
+/// </summary>
+public class StudentAssignmentListQuery : PagedQuery
+{
+    public Guid? ClassCourseId { get; set; }
+
+    public Guid? SubjectId { get; set; }
+
+    /// <summary>Filters to one teacher's assignments. Safe to expose: the query stays
+    /// scoped to published assignments in the student's own classes.</summary>
+    public Guid? TeacherId { get; set; }
+
+    public string? Search { get; set; }
+}

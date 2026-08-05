@@ -10,6 +10,7 @@ using AssignmentSystem.Api.Controllers;
 using AssignmentSystem.Api.Filters;
 using AssignmentSystem.Api.Middleware;
 using AssignmentSystem.Api.Services;
+using AssignmentSystem.Api.Swagger;
 using AssignmentSystem.Application;
 using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Infrastructure;
@@ -19,6 +20,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Serilog;
 
 // Populate configuration from .env for local runs; a no-op under docker compose, where
 // these arrive as real environment variables.
@@ -27,6 +29,28 @@ DotEnvLoader.Load(Directory.GetCurrentDirectory());
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables();
+
+// ---------------------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------------------
+
+// Replaces the default provider outright rather than sitting alongside it, so there is one
+// pipeline and one place to reason about levels. Minimum levels come from configuration;
+// the sinks are fixed in code so "console + rolling file" is a property of the build rather
+// than something a missing config section could silently drop.
+builder.Host.UseSerilog((context, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .WriteTo.File(
+        Path.Combine(AppContext.BaseDirectory, "logs", "assignment-system-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+
+        // The integration tests boot two hosts in one process (ApiFactory and
+        // RateLimitedApiFactory), and both would open this same file. Without shared
+        // access the second one loses its file sink to a locking error.
+        shared: true));
 
 // ---------------------------------------------------------------------------------------
 // Authentication
@@ -204,6 +228,8 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 
+    options.OperationFilter<AlternateResponseOperationFilter>();
+
     var xmlPath = Path.Combine(AppContext.BaseDirectory, "AssignmentSystem.Api.xml");
 
     if (File.Exists(xmlPath))
@@ -218,7 +244,17 @@ var app = builder.Build();
 // populated, working system with no manual database step.
 await DatabaseInitializer.InitialiseAsync(app.Services);
 
-// Outermost, so it catches anything thrown further down the pipeline.
+// One completion line per request — method, path, status, elapsed — replacing the several
+// the default provider emits.
+//
+// Outside the exception middleware, deliberately. Inside it, a rule rejection reaches this
+// as an exception that nothing has translated yet, and it records 500 for a request the
+// client saw answered 409. Out here the status has been written, so the log agrees with
+// the response. Nothing is lost by not seeing the exception: ExceptionHandlingMiddleware
+// logs every domain rejection at Warning and every unhandled fault at Error.
+app.UseSerilogRequestLogging();
+
+// Catches anything thrown further down the pipeline.
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<BuildSignatureMiddleware>();
 

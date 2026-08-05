@@ -61,6 +61,75 @@ public class SwaggerTests
     }
 
     [Fact]
+    public async Task Swagger_Documents_Both_Shapes_Of_GetAssignmentById()
+    {
+        var client = _factory.CreateClient();
+
+        var document = await client.GetFromJsonAsyncCompat("/swagger/v1/swagger.json");
+
+        var schema = document
+            .GetProperty("paths")
+            .GetProperty("/api/v1/assignments/{id}")
+            .GetProperty("get")
+            .GetProperty("responses")
+            .GetProperty("200")
+            .GetProperty("content")
+            .GetProperty("application/json")
+            .GetProperty("schema");
+
+        schema.TryGetProperty("oneOf", out var oneOf).Should().BeTrue(
+            "the route answers in a different shape per role, and documenting only one "
+            + "of them would misdescribe the contract for the other");
+
+        var referenced = oneOf.EnumerateArray()
+            .Select(s => s.GetProperty("$ref").GetString()!.Split('/')[^1])
+            .ToArray();
+
+        referenced.Should().BeEquivalentTo("StudentAssignmentDto", "AssignmentDto");
+    }
+
+    [Fact]
+    public async Task Swagger_Documents_The_400_On_Guarded_List_Endpoints()
+    {
+        var client = _factory.CreateClient();
+
+        var document = await client.GetFromJsonAsyncCompat("/swagger/v1/swagger.json");
+
+        var responses = document
+            .GetProperty("paths")
+            .GetProperty("/api/v1/assignments/available")
+            .GetProperty("get")
+            .GetProperty("responses");
+
+        responses.TryGetProperty("400", out _).Should().BeTrue(
+            "an unrecognised filter is rejected rather than ignored, so the contract "
+            + "has to say so");
+    }
+
+    [Fact]
+    public async Task Swagger_Does_Not_Offer_Students_Filters_They_Cannot_Use()
+    {
+        var client = _factory.CreateClient();
+
+        var document = await client.GetFromJsonAsyncCompat("/swagger/v1/swagger.json");
+
+        var parameters = document
+            .GetProperty("paths")
+            .GetProperty("/api/v1/assignments/available")
+            .GetProperty("get")
+            .GetProperty("parameters")
+            .EnumerateArray()
+            .Select(p => p.GetProperty("name").GetString())
+            .ToArray();
+
+        parameters.Should().NotContain("Status",
+            "a student's list is always Published, so advertising a status filter would "
+            + "promise something the endpoint cannot do");
+
+        parameters.Should().Contain("TeacherId");
+    }
+
+    [Fact]
     public async Task Swagger_Document_Includes_The_Auth_And_Meta_Routes()
     {
         var client = _factory.CreateClient();
