@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
+# Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
+#
+# Optional public exposure of the local stack via a Cloudflare quick tunnel.
+# Free, no account and no credit card required; the API gets a public HTTPS URL.
+#
+# The URL is ephemeral — it changes every time the tunnel container (re)starts.
+# Print it with:  docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs -f tunnel-api
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d tunnel-api
+
+services:
+  tunnel-api:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://api:8080
+    depends_on:
+      - api

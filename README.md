@@ -57,6 +57,19 @@ Then open:
 Sign in with `admin@demo.test` / `Admin@123`. The database is created, migrated and seeded
 automatically on first start — there is no manual SQL step.
 
+## Live deployment
+
+| What | Where |
+|---|---|
+| Frontend (Vercel) | <https://frontend-hazel-omega-38.vercel.app> |
+| API (Swagger UI) | <https://shadow-gotta-designers-vinyl.trycloudflare.com/swagger> |
+
+The frontend is built on Vercel with the API URL inlined. The API itself runs on the author's
+machine behind a free Cloudflare quick tunnel — no cloud account or credit card required. A
+quick-tunnel URL is **ephemeral**: if the `tunnel-api` container restarts, the URL changes and
+the frontend's build-time API URL must be updated to match. See
+[docker-compose.tunnel.yml](docker-compose.tunnel.yml).
+
 ---
 
 ## Why this architecture
@@ -506,8 +519,9 @@ Stated plainly rather than left to be discovered.
   The automated testing effort went to the business rules, where the brief puts the emphasis.
 - **Pagination is offset-based**, which is fine at this size and would drift under heavy
   concurrent writes.
-- **A live URL is optional per the brief.** The full stack runs via Docker; a hosted deployment
-  of the API and database requires a Docker-capable host.
+- **The live API URL is ephemeral.** The frontend on Vercel has the tunnel URL baked in at build
+  time; restarting the tunnel requires a rebuild with the new URL. The stack remains fully
+  functional offline via Docker.
 
 ---
 

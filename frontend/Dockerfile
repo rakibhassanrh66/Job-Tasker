@@ -18,6 +18,9 @@ COPY . .
 # NEXT_PUBLIC_* values are inlined at build time, so the API URL must be present here.
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# Select the standalone output the runtime stage below depends on.
+ARG NEXT_DOCKER=1
+ENV NEXT_DOCKER=1
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

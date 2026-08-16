@@ -40,9 +40,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Required by frontend/Dockerfile, which copies .next/standalone and runs server.js.
-  // Without this the image builds and then fails to start.
-  output: "standalone",
+  // Docker sets NEXT_DOCKER=1 so the image can copy .next/standalone and run server.js;
+  // on Vercel's hosted build this flag is absent and the default serverless output is used.
+  output: process.env.NEXT_DOCKER === "1" ? "standalone" : undefined,
   poweredByHeader: false,
 
   async headers() {
