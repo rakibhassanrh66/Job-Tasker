@@ -40,8 +40,8 @@ fast client, not a gatekeeper.
 ## Run it in one command
 
 ```bash
-git clone https://github.com/rakibhassanrh66/Job-Tasker.git
-cd Job-Tasker
+git clone https://github.com/rakibhassanrh66/assignment-submission-management-system.git
+cd assignment-submission-management-system
 cp .env.example .env          # PowerShell: Copy-Item .env.example .env
 # edit .env — replace every CHANGE_ME (see "Environment variables")
 docker compose up --build
@@ -131,8 +131,8 @@ mean editing a switch statement.
 
 ## Business rules
 
-The eleven rules the system enforces, each mapped to the tests that prove it in
-[docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md).
+The eleven rules the system enforces, each proven by tests whose names are listed under
+[Running the tests](#running-the-tests).
 
 | # | Rule |
 |---|---|
@@ -204,9 +204,6 @@ here depends on constraints the database can enforce (notably the unique
 │  │  ├─ components/                         # DataTable, Modal, Pagination, badges, layout, effects
 │  │  └─ lib/                                # API client, session store, types, formatting
 │  └─ Dockerfile
-├─ docs/
-│  ├─ ERD.md                                 # data model and the reasoning behind it
-│  └─ TEST_COVERAGE.md                       # business rule -> test name map
 ├─ .github/workflows/ci.yml
 ├─ docker-compose.yml
 └─ .env.example
@@ -271,7 +268,7 @@ enrolments and a few assignments and submissions.
 - Set `SEED_ON_STARTUP=false` in `.env` to skip seeding.
 
 The data model and the reasoning behind it — including why the `Marks` upper bound is a service
-rule rather than a database `CHECK` — is in [docs/ERD.md](docs/ERD.md).
+rule rather than a database `CHECK` — is covered under [Assumptions](#assumptions).
 
 To create a new migration after changing an entity:
 
@@ -349,7 +346,8 @@ Frontend checks:
 cd frontend && npm run lint && npm run typecheck && npm run build
 ```
 
-[docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md) maps each business rule to the tests that prove it.
+Each business rule above is pinned by its own named tests — the test files live under
+`backend/tests`, and the filters above show how to run any single rule's suite.
 
 ---
 
