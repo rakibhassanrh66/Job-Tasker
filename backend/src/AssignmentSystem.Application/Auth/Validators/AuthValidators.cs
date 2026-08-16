@@ -22,6 +22,13 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
         RuleFor(x => x.Password)
             .NotEmpty().WithMessage("Password is required.")
             .MaximumLength(256);
+
+        // Honeypot: a human never sees or fills this field, so anything in it is a bot.
+        // Rejecting it up-front (before the throttle is consulted) means bots consume no
+        // credential lookups and cannot pollute the failed-attempt counters.
+        RuleFor(x => x.Honeypot)
+            .Must(honeypot => string.IsNullOrWhiteSpace(honeypot))
+            .WithMessage("Automated submission detected.");
     }
 }
 

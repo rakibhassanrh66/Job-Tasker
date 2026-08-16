@@ -3,168 +3,169 @@
 
 "use client";
 
+import { ClipboardList, Plus } from "lucide-react";
 import { useState } from "react";
-import { CreatePanel } from "@/components/create-panel";
-import { DataTable, type Column } from "@/components/data-table";
+import { CreatePanel, type FieldSpec } from "@/components/create-panel";
+import { SortableDataTable, type SortableColumn } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
-import { Button, Card, ErrorBanner, PageHeader, SelectField } from "@/components/ui";
+import { Badge, Button, Card, PageHeader, StatCard, TextField } from "@/components/ui";
 import { api, query } from "@/lib/api";
-import { UserRole, type PagedResult, type SubjectDto, type TeacherAssignmentDto, type UserDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
+import { useApiMutation, useApiPagedQuery, useApiQuery } from "@/lib/query";
+import { useDebouncedValue } from "@/lib/use-debounced";
+import { UserRole, type ClassCourseDto, type PagedResult, type SubjectDto, type TeacherAssignmentDto, type UserDto } from "@/lib/types";
 
-/**
- * Which teacher teaches which subject in which class.
- *
- * This table is the input to business rule 3 — it decides where a teacher may create work —
- * so it is admin-only. A teacher who could edit it could grant themselves permission to set
- * assignments anywhere.
- */
+const PAGE_SIZE = 10;
+
 export default function AdminAllocationsPage() {
   const [page, setPage] = useState(1);
-  const [teacherFilter, setTeacherFilter] = useState("");
-  const [failure, setFailure] = useState<unknown>(null);
-  const [draft, setDraft] = useState({ teacherId: "", subjectId: "" });
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const [createOpen, setCreateOpen] = useState(false);
 
-  const teachers = useApi<PagedResult<UserDto>>(
-    () => api.get<PagedResult<UserDto>>(`/users${query({ role: UserRole.Teacher, pageSize: 100 })}`),
-    [],
-  );
-
-  const subjects = useApi<PagedResult<SubjectDto>>(
-    () => api.get<PagedResult<SubjectDto>>("/subjects?pageSize=100"),
-    [],
-  );
-
-  const { data, error, loading, reload } = useApi<PagedResult<TeacherAssignmentDto>>(
+  const { data } = useApiPagedQuery<TeacherAssignmentDto>(
+    ["admin", "allocations"],
+    { page, pageSize: PAGE_SIZE, search: debouncedSearch },
     () =>
       api.get<PagedResult<TeacherAssignmentDto>>(
-        `/teacher-assignments${query({ page, pageSize: 10, teacherId: teacherFilter || undefined })}`,
+        `/teacher-assignments${query({ page, pageSize: PAGE_SIZE, search: debouncedSearch })}`,
       ),
-    [page, teacherFilter],
   );
 
-  const remove = async (row: TeacherAssignmentDto) => {
-    if (
-      !window.confirm(
-        `Remove ${row.teacherName} from ${row.subjectName} (${row.classCourseCode})? `
-        + "They will no longer be able to create assignments there.",
-      )
-    ) {
-      return;
-    }
+  const { data: teacherData } = useApiQuery(["admin", "users", "teachers"], () =>
+    api.get<PagedResult<UserDto>>(`/users?role=${UserRole.Teacher}&pageSize=100`),
+  );
+  const { data: subjectData } = useApiQuery(["admin", "subjects", "options"], () =>
+    api.get<PagedResult<SubjectDto>>("/subjects?pageSize=100"),
+  );
+  const { data: classData } = useApiQuery(["admin", "classes", "options"], () =>
+    api.get<PagedResult<ClassCourseDto>>("/classes?pageSize=100"),
+  );
 
-    setFailure(null);
+  const rows = data?.items ?? [];
+  const totalCount = data?.totalCount ?? 0;
 
-    try {
-      await api.del(`/teacher-assignments/${row.id}`);
-      reload();
-    } catch (cause) {
-      setFailure(cause);
-    }
-  };
+  const createAllocation = useApiMutation<unknown, Record<string, string>>({
+    mutationFn: (values) =>
+      api.post("/teacher-assignments", {
+        teacherId: values.teacherId,
+        subjectId: values.subjectId,
+        classCourseId: values.classCourseId,
+      }),
+    invalidate: [["admin", "allocations"], ["admin", "allocations", "count"]],
+    successMessage: () => "Allocation created.",
+  });
 
-  const columns: Column<TeacherAssignmentDto>[] = [
-    { header: "Teacher", cell: (row) => row.teacherName },
-    { header: "Subject", cell: (row) => row.subjectName },
-    { header: "Class", cell: (row) => <span className="font-mono text-xs">{row.classCourseCode}</span> },
+  const allocationFields: FieldSpec[] = [
     {
-      header: "",
-      align: "right",
-      cell: (row) => (
-        <Button variant="ghost" onClick={() => void remove(row)}>
-          Remove
-        </Button>
-      ),
+      name: "teacherId",
+      label: "Teacher",
+      type: "select",
+      required: true,
+      options:
+        teacherData?.items.map((teacher) => ({
+          value: teacher.id,
+          label: `${teacher.fullName} (${teacher.email})`,
+        })) ?? [],
+    },
+    {
+      name: "subjectId",
+      label: "Subject",
+      type: "select",
+      required: true,
+      options:
+        subjectData?.items.map((subject) => ({
+          value: subject.id,
+          label: `${subject.name} (${subject.code})`,
+        })) ?? [],
+    },
+    {
+      name: "classCourseId",
+      label: "Class / Course",
+      type: "select",
+      required: true,
+      options:
+        classData?.items.map((classCourse) => ({
+          value: classCourse.id,
+          label: `${classCourse.name} (${classCourse.code})`,
+        })) ?? [],
+    },
+  ];
+
+  const columns: SortableColumn<TeacherAssignmentDto>[] = [
+    {
+      key: "teacherName",
+      header: "Teacher",
+      sortValue: (row) => row.teacherName.toLowerCase(),
+      render: (row) => <p className="font-semibold text-white">{row.teacherName}</p>,
+    },
+    {
+      key: "subjectName",
+      header: "Subject",
+      sortValue: (row) => row.subjectName.toLowerCase(),
+      render: (row) => <Badge tone="amber">{row.subjectName}</Badge>,
+    },
+    {
+      key: "classCourseCode",
+      header: "Class / Course",
+      sortValue: (row) => row.classCourseCode.toLowerCase(),
+      render: (row) => <Badge tone="blue">{row.classCourseCode}</Badge>,
     },
   ];
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
       <PageHeader
-        title="Teacher allocations"
-        description="Which teacher may set work in which subject and class."
+        eyebrow="Administrator"
+        title="Teacher Allocations"
+        description="Bind a teacher to a subject inside a class. Only allocated teachers may own assignments there."
+        action={
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Allocate Teacher
+          </Button>
+        }
       />
 
-      <ErrorBanner error={failure} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard title="Total Allocations" value={totalCount} tone="amber" icon={ClipboardList} />
+        <StatCard title="Teachers Available" value={teacherData?.totalCount ?? 0} tone="sky" />
+        <StatCard title="Subjects" value={subjectData?.totalCount ?? 0} tone="emerald" />
+      </div>
 
-      <CreatePanel
-        title="Add allocation"
-        submitLabel="Allocate"
-        onSubmit={async () => {
-          // The class is implied by the subject: a subject belongs to exactly one class,
-          // and the API rejects a pair that disagrees. Deriving it here means the admin
-          // cannot construct that mismatch in the first place.
-          const subject = subjects.data?.items.find((s) => s.id === draft.subjectId);
-
-          await api.post("/teacher-assignments", {
-            teacherId: draft.teacherId,
-            subjectId: draft.subjectId,
-            classCourseId: subject?.classCourseId,
-          });
-        }}
-        onCreated={() => {
-          setDraft({ teacherId: "", subjectId: "" });
-          reload();
-        }}
-      >
-        <SelectField
-          label="Teacher"
-          value={draft.teacherId}
-          onChange={(e) => setDraft({ ...draft, teacherId: e.target.value })}
-        >
-          <option value="">Choose…</option>
-          {teachers.data?.items.map((teacher) => (
-            <option key={teacher.id} value={teacher.id}>
-              {teacher.fullName} — {teacher.email}
-            </option>
-          ))}
-        </SelectField>
-
-        <SelectField
-          label="Subject and class"
-          value={draft.subjectId}
-          onChange={(e) => setDraft({ ...draft, subjectId: e.target.value })}
-        >
-          <option value="">Choose…</option>
-          {subjects.data?.items.map((subject) => (
-            <option key={subject.id} value={subject.id}>
-              {subject.name} · {subject.classCourseCode}
-            </option>
-          ))}
-        </SelectField>
-      </CreatePanel>
-
-      <Card className="space-y-4">
-        <div className="max-w-sm">
-          <SelectField
-            label="Teacher"
-            value={teacherFilter}
+      <Card className="mt-8 space-y-5 p-5">
+        <div className="w-full max-w-md">
+          <TextField
+            label="Search Allocations"
+            placeholder="Search by teacher or subject…"
+            value={search}
             onChange={(e) => {
-              setTeacherFilter(e.target.value);
+              setSearch(e.target.value);
               setPage(1);
             }}
-          >
-            <option value="">All teachers</option>
-            {teachers.data?.items.map((teacher) => (
-              <option key={teacher.id} value={teacher.id}>
-                {teacher.fullName}
-              </option>
-            ))}
-          </SelectField>
+          />
         </div>
 
-        <DataTable
-          rows={data?.items}
+        <SortableDataTable
           columns={columns}
-          loading={loading}
-          error={error}
-          rowKey={(row) => row.id}
-          empty="No allocations yet"
-          emptyHint="A teacher cannot create assignments until they are allocated to a subject."
+          rows={rows}
+          loading={data === undefined}
+          emptyTitle="No allocations yet"
+          emptyHint="Allocate a teacher to a subject before they can create assignments."
+          emptyIcon={ClipboardList}
         />
 
-        {data && <Pagination page={data} onPageChange={setPage} />}
+        <Pagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} onPageChange={setPage} />
       </Card>
-    </>
+
+      <CreatePanel
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Allocate Teacher"
+        description="Choose the teacher, subject and class for this allocation."
+        fields={allocationFields}
+        submitLabel="Create Allocation"
+        onSubmit={createAllocation.mutateAsync}
+      />
+    </div>
   );
 }

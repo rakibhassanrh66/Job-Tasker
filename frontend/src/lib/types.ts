@@ -64,12 +64,26 @@ export const submissionStatusLabels: Record<SubmissionStatus, string> = {
 };
 
 /** Home route per role. Used by the login redirect and by the guard when a role lands
- *  somewhere it should not be. */
+ *  somewhere it should not be. Each lands on its dashboard. */
 export const roleHome: Record<UserRole, string> = {
-  [UserRole.Admin]: "/admin/users",
-  [UserRole.Teacher]: "/teacher/assignments",
-  [UserRole.Student]: "/student/assignments",
+  [UserRole.Admin]: "/admin",
+  [UserRole.Teacher]: "/teacher",
+  [UserRole.Student]: "/student",
 };
+
+/** Safe label lookup: an out-of-range enum value (which the API should never send, but a
+ *  contract drift would) renders a fallback instead of the string "undefined". */
+export function labelFor<T extends number>(
+  labels: Record<T, string>,
+  value: number | null | undefined,
+  fallback = "—",
+): string {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+
+  return labels[value as T] ?? fallback;
+}
 
 // ---------------------------------------------------------------------------------
 // Paging

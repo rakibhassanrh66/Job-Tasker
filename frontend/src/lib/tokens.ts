@@ -22,6 +22,18 @@ const ACCESS_KEY = "asms.accessToken";
 const REFRESH_KEY = "asms.refreshToken";
 const USER_KEY = "asms.user";
 
+/**
+ * Plain, non-httpOnly marker cookie written alongside the tokens.
+ *
+ * It exists solely so the edge middleware can route a logged-in user away from /login and
+ * a logged-out user away from the role dashboards on the first navigation. It carries no
+ * secret — the actual token never leaves localStorage — so it is a convenience, not a
+ * security boundary. It cannot be HttpOnly because the browser's JavaScript has to create
+ * and delete it.
+ */
+const SESSION_COOKIE = "asms.session";
+const SESSION_COOKIE_DAYS = 30;
+
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
 let user: UserProfile | null = null;
@@ -134,6 +146,8 @@ export function setSession(auth: AuthResponse): void {
   window.localStorage.setItem(REFRESH_KEY, auth.refreshToken);
   window.localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
 
+  setSessionCookie();
+
   snapshot = { user: auth.user, ready: true };
   publish();
 }
@@ -150,7 +164,25 @@ export function clearSession(): void {
     window.localStorage.removeItem(ACCESS_KEY);
     window.localStorage.removeItem(REFRESH_KEY);
     window.localStorage.removeItem(USER_KEY);
+    clearSessionCookie();
   }
 
   publish();
+}
+
+function setSessionCookie(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const expires = new Date(Date.now() + SESSION_COOKIE_DAYS * 24 * 60 * 60 * 1000).toUTCString();
+  document.cookie = `${SESSION_COOKIE}=1; path=/; samesite=lax; expires=${expires}`;
+}
+
+function clearSessionCookie(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  document.cookie = `${SESSION_COOKIE}=; path=/; samesite=lax; max-age=0`;
 }

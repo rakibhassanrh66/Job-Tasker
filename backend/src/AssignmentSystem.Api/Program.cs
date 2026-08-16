@@ -12,12 +12,14 @@ using AssignmentSystem.Api.Middleware;
 using AssignmentSystem.Api.Services;
 using AssignmentSystem.Api.Swagger;
 using AssignmentSystem.Application;
+using AssignmentSystem.Application.Auth;
 using AssignmentSystem.Application.Common.Interfaces;
 using AssignmentSystem.Infrastructure;
 using AssignmentSystem.Infrastructure.Auth;
 using AssignmentSystem.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
@@ -124,6 +126,32 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             }));
 });
+
+// Per-account protection, layered on top of the per-address limiter above. Where the
+// limiter bounds one address, the throttle bounds one account — so credential stuffing is
+// capped even when it comes from many different addresses. Both the per-account attempt
+// window and the escalating failure lockout are configurable via RateLimit:.
+var loginMaxFailures = int.TryParse(
+    builder.Configuration["RateLimit:LoginMaxFailures"], out var maxFailures)
+    ? maxFailures : 5;
+
+var loginWindowSeconds = int.TryParse(
+    builder.Configuration["RateLimit:LoginWindowSeconds"], out var loginWindow)
+    ? loginWindow : 900;
+
+var authAccountPermitPerWindow = int.TryParse(
+    builder.Configuration["RateLimit:AuthAccountPermitPerWindow"], out var accountPermit)
+    ? accountPermit : 3;
+
+var authAccountWindowSeconds = int.TryParse(
+    builder.Configuration["RateLimit:AuthAccountWindowSeconds"], out var accountWindow)
+    ? accountWindow : 900;
+
+builder.Services.AddSingleton<ILoginThrottle>(new LoginThrottle(
+    loginMaxFailures,
+    TimeSpan.FromSeconds(loginWindowSeconds),
+    authAccountPermitPerWindow,
+    TimeSpan.FromSeconds(authAccountWindowSeconds)));
 
 // ---------------------------------------------------------------------------------------
 // CORS

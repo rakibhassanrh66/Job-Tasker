@@ -46,6 +46,11 @@ public class AuthServiceTests
             new JwtTokenService(jwtOptions, _clock),
             _currentUser,
             _clock,
+            new LoginThrottle(
+                maxFailures: 5,
+                window: TimeSpan.FromMinutes(15),
+                maxAttemptsPerWindow: 1000,
+                attemptWindow: TimeSpan.FromMinutes(15)),
             NullLogger<AuthService>.Instance);
     }
 

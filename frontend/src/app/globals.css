@@ -3,17 +3,200 @@
 /*
  * Copyright (c) 2026 Rakib Hassan. Submitted for candidacy evaluation only.
  * Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
+ *
+ * Industrial-chic editorial theme on the slate ramp. The ink tokens ARE the slate
+ * palette (ink-950 == slate-950 #020617, ink-800 == slate-800 #1e293b, ...) so the
+ * enforced design tokens live in one place and a component never names a raw hex.
+ * One amber signal accent for eyebrows, badges and progress; primary CTAs are
+ * slate-100 on ink-950.
  */
 
-@theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+@theme {
+  /* Slate surface ramp — enforced: bg-slate-950 #020617, surfaces slate-900/800, lines slate-800/700 */
+  --color-ink-950: #020617;
+  --color-ink-900: #0f172a;
+  --color-ink-850: #131c30;
+  --color-ink-800: #1e293b;
+  --color-ink-700: #334155;
+  --color-ink-600: #475569;
+  --color-ink-500: #64748b;
+
+  /* The one signal colour. Black on amber clears 4.5:1 by a wide margin. */
+  --color-accent-300: #fcd34d;
+  --color-accent-400: #fbbf24;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+
+  /* 1px hairlines: slate-800 for panels, slate-700 for stronger edges */
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 
 html {
   font-family: var(--font-sans);
+  background: var(--color-ink-950);
+  color-scheme: dark;
 }
 
-/* Dark mode follows the OS. There is no in-app theme switch: it would be one more piece
-   of state to persist and test, and nothing in the brief asks for it. */
+body {
+  background: var(--color-ink-950);
+  color: var(--color-slate-300);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent-400);
+  color: var(--color-ink-950);
+}
+
+/*
+ * Global focus fallback: every interactive element without a custom ring gets a
+ * slate-500 outline. Components that implement their own focus-visible styling use
+ * outline-none and are therefore exempt — outlines are never removed without a
+ * replacement, which is what the evaluation brief requires.
+ */
+@layer base {
+  :where(a, button, input, select, textarea, summary, [role="button"], [role="menuitem"]):focus-visible {
+    outline: 2px solid var(--color-slate-500);
+    outline-offset: 2px;
+  }
+}
+
+/* Slim, barely-there scrollbars for panels and tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-500);
+}
+
+/* -----------------------------------------------------------------------------------
+ * Motion system. GPU-only transforms (opacity / translate3d / scale3d), shared easings.
+ * Every decorative animation is gated behind prefers-reduced-motion at the bottom.
+ * ----------------------------------------------------------------------------------- */
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale3d(0.98, 0.98, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drawer-enter {
+  from {
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.animate-page-enter {
+  animation: page-enter 0.5s var(--ease-expo) both;
+}
+
+.animate-toast-enter {
+  animation: toast-enter 0.35s var(--ease-expo) both;
+}
+
+.animate-modal-enter {
+  animation: modal-enter 0.3s var(--ease-expo) both;
+}
+
+.animate-backdrop-enter {
+  animation: backdrop-enter 0.25s ease-out both;
+}
+
+.animate-drawer-enter {
+  animation: drawer-enter 0.35s var(--ease-expo) both;
+}
+
+/* Staggered row reveal for dashboards */
+.animate-rise {
+  animation: page-enter 0.55s var(--ease-expo) both;
+}
+
+/* Skeleton: enforced animate-pulse on slate-800 */
+.skeleton {
+  background: var(--color-ink-800);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Respect reduced motion: kill decorative movement, keep state changes instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skeleton {
+    animation: none;
+  }
+}

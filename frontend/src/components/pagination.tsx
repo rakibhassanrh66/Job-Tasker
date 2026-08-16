@@ -3,55 +3,113 @@
 
 "use client";
 
-import type { PagedResult } from "@/lib/types";
-import { Button } from "./ui";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 /**
- * Bound to the API's PagedResult, which already carries hasPrevious/hasNext/totalPages —
- * so the client never recomputes what the server has said, and the buttons cannot disagree
- * with the data.
+ * Server-side pager. The API counts rows, so page numbers are driven entirely by
+ * `totalCount` / `pageSize`; the page button set adapts around the current page.
  */
-export function Pagination<T>({
+
+function pageWindow(current: number, total: number): (number | "gap")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+
+  const pages: (number | "gap")[] = [1];
+
+  if (current > 4) {
+    pages.push("gap");
+  }
+
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  if (current < total - 3) {
+    pages.push("gap");
+  }
+
+  pages.push(total);
+
+  return pages;
+}
+
+export function Pagination({
   page,
+  pageSize,
+  totalCount,
   onPageChange,
 }: {
-  page: PagedResult<T>;
-  onPageChange: (next: number) => void;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  onPageChange: (page: number) => void;
 }) {
-  if (page.totalPages <= 1) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  if (totalPages <= 1) {
     return null;
   }
 
-  const first = (page.page - 1) * page.pageSize + 1;
-  const last = Math.min(page.page * page.pageSize, page.totalCount);
+  const pageButtonClass = (active: boolean) =>
+    `flex h-9 min-w-9 items-center justify-center rounded-md border px-2.5 text-sm font-semibold transition-all duration-150 ${
+      active
+        ? "border-accent-400 bg-accent-400 text-ink-950"
+        : "border-line bg-ink-850 text-slate-400 hover:border-ink-500 hover:text-white"
+    }`;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-700">
-      <p className="text-sm text-slate-600 dark:text-slate-400">
-        {first}–{last} of {page.totalCount}
+    <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs text-slate-500">
+        {totalCount.toLocaleString()} result{totalCount === 1 ? "" : "s"} · page {page} of{" "}
+        {totalPages.toLocaleString()}
       </p>
 
-      <div className="flex items-center gap-2">
-        <Button
-          variant="secondary"
-          disabled={!page.hasPrevious}
-          onClick={() => onPageChange(page.page - 1)}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 1}
+          aria-label="Previous page"
+          className={`${pageButtonClass(false)} disabled:cursor-not-allowed disabled:opacity-40`}
         >
-          Previous
-        </Button>
+          <ChevronLeft className="h-4 w-4" aria-hidden />
+        </button>
 
-        <span className="text-sm text-slate-600 dark:text-slate-400">
-          Page {page.page} of {page.totalPages}
-        </span>
+        {pageWindow(page, totalPages).map((p, index) =>
+          p === "gap" ? (
+            <span
+              key={`gap-${index}`}
+              className="flex h-9 min-w-5 items-center justify-center text-sm text-slate-500"
+            >
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPageChange(p)}
+              aria-current={p === page ? "page" : undefined}
+              className={pageButtonClass(p === page)}
+            >
+              {p}
+            </button>
+          ),
+        )}
 
-        <Button
-          variant="secondary"
-          disabled={!page.hasNext}
-          onClick={() => onPageChange(page.page + 1)}
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= totalPages}
+          aria-label="Next page"
+          className={`${pageButtonClass(false)} disabled:cursor-not-allowed disabled:opacity-40`}
         >
-          Next
-        </Button>
+          <ChevronRight className="h-4 w-4" aria-hidden />
+        </button>
       </div>
-    </div>
+    </nav>
   );
 }

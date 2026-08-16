@@ -4,6 +4,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ClipboardPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -22,8 +23,8 @@ import {
 } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { fromLocalInputValue } from "@/lib/format";
+import { useApiQuery } from "@/lib/query";
 import type { AssignmentDto, PagedResult, TeacherAssignmentDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
 
 /**
  * Mirrors CreateAssignmentRequestValidator. The deadline rule is the interesting one: the
@@ -53,9 +54,9 @@ export default function NewAssignmentPage() {
 
   // A teacher cannot read the subject or class catalogues — those are admin-only — so the
   // options come from their own allocations, which is also exactly the set rule 3 permits.
-  const allocations = useApi<PagedResult<TeacherAssignmentDto>>(
+  const allocations = useApiQuery<PagedResult<TeacherAssignmentDto>>(
+    ["teacher", "allocations", "mine"],
     () => api.get<PagedResult<TeacherAssignmentDto>>("/teacher-assignments/mine?pageSize=100"),
-    [],
   );
 
   const {
@@ -113,35 +114,41 @@ export default function NewAssignmentPage() {
     }
   });
 
-  if (allocations.loading) {
+  if (allocations.isLoading) {
     return (
-      <div className="flex justify-center py-16">
-        <Spinner />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner label="Loading your allocations" />
       </div>
     );
   }
 
   if (allocations.data && allocations.data.items.length === 0) {
     return (
-      <>
-        <PageHeader title="New assignment" />
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+        <PageHeader
+          eyebrow="Teacher"
+          title="New Assignment"
+          description="Created as a draft. Students see nothing until you publish it."
+        />
         <EmptyState
+          icon={ClipboardPlus}
           title="You are not allocated to any subject yet"
           hint="An administrator has to allocate you to a subject within a class before you can set work there."
         />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
       <PageHeader
-        title="New assignment"
+        eyebrow="Teacher"
+        title="New Assignment"
         description="Created as a draft. Students see nothing until you publish it."
       />
 
-      <Card className="max-w-2xl">
-        <form onSubmit={onSubmit} className="space-y-4" noValidate>
+      <Card className="max-w-2xl p-6">
+        <form onSubmit={onSubmit} className="space-y-5" noValidate>
           <ErrorBanner error={failure} />
 
           <SelectField
@@ -208,6 +215,6 @@ export default function NewAssignmentPage() {
           </div>
         </form>
       </Card>
-    </>
+    </div>
   );
 }

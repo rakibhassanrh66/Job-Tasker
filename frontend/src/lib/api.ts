@@ -208,11 +208,16 @@ export const api = {
   put: <T>(path: string, body?: unknown) => send<T>({ method: "PUT", path, body }),
   del: <T = void>(path: string) => send<T>({ method: "DELETE", path }),
 
-  login: (email: string, password: string) =>
+  /**
+   * login: email + password plus the honeypot field. The honeypot is an invisible form
+   * field a human never fills; a bot that autofills it gets a 422 from the API before any
+   * credential work happens. It is sent with the request so the trap is server-side.
+   */
+  login: (email: string, password: string, honeypot?: string) =>
     send<AuthResponse>({
       method: "POST",
       path: "/auth/login",
-      body: { email, password },
+      body: { email, password, honeypot: honeypot ?? "" },
       anonymous: true,
     }),
 };

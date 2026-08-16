@@ -29,6 +29,15 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// exercised by <see cref="RateLimitedApiFactory"/> with a deliberately tiny limit.</summary>
     protected virtual int AuthPermitPerWindow => 1000;
 
+    /// <summary>Failed logins allowed before the per-account lockout engages. Raised here so
+    /// ordinary tests can exercise wrong-password paths without ever locking a seeded
+    /// account; the lockout itself is exercised by <see cref="ThrottledApiFactory"/>.</summary>
+    protected virtual int LoginMaxFailures => 1000;
+
+    /// <summary>Login attempts allowed per account per window. Raised here for the same
+    /// reason as <see cref="LoginMaxFailures"/>.</summary>
+    protected virtual int AuthAccountPermitPerWindow => 1000;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
@@ -54,6 +63,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable(
             "RateLimit__AuthPermitPerWindow", AuthPermitPerWindow.ToString());
         Environment.SetEnvironmentVariable("RateLimit__AuthWindowSeconds", "60");
+        Environment.SetEnvironmentVariable(
+            "RateLimit__LoginMaxFailures", LoginMaxFailures.ToString());
+        Environment.SetEnvironmentVariable(
+            "RateLimit__AuthAccountPermitPerWindow", AuthAccountPermitPerWindow.ToString());
+        Environment.SetEnvironmentVariable("RateLimit__AuthAccountWindowSeconds", "900");
 
         // Force the host to build now, so migrations and seeding finish before any test runs.
         using var scope = Services.CreateScope();
@@ -97,6 +111,17 @@ public class RateLimitedApiFactory : ApiFactory
     public const int Permitted = 3;
 
     protected override int AuthPermitPerWindow => Permitted;
+}
+
+/// <summary>Same application, but with the per-account throttle turned down so a test can
+/// trip the account lockout without hammering the per-address limiter.</summary>
+public class ThrottledApiFactory : ApiFactory
+{
+    public const int FailuresBeforeLockout = 3;
+
+    protected override int LoginMaxFailures => FailuresBeforeLockout;
+
+    protected override int AuthAccountPermitPerWindow => 100;
 }
 
 [CollectionDefinition(Name)]

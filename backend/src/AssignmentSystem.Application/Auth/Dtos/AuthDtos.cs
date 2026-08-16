@@ -6,7 +6,10 @@ using AssignmentSystem.Domain.Enums;
 
 namespace AssignmentSystem.Application.Auth.Dtos;
 
-public record LoginRequest(string Email, string Password);
+/// <param name="Honeypot">Invisible field that real browsers leave empty. A filled value
+/// marks an automated client, and the validator rejects the request before any credential
+/// work (or failed-attempt bookkeeping) happens.</param>
+public record LoginRequest(string Email, string Password, string? Honeypot = null);
 
 public record RefreshRequest(string RefreshToken);
 

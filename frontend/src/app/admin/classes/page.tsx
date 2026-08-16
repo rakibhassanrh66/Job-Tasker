@@ -3,108 +3,108 @@
 
 "use client";
 
+import { Building2, Plus } from "lucide-react";
 import { useState } from "react";
-import { CreatePanel } from "@/components/create-panel";
-import { DataTable, type Column } from "@/components/data-table";
+import { CreatePanel, type FieldSpec } from "@/components/create-panel";
+import { SortableDataTable, type SortableColumn } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
-import { Button, Card, ErrorBanner, PageHeader, TextField } from "@/components/ui";
+import { Badge, Button, Card, PageHeader, StatCard, TextField } from "@/components/ui";
 import { api, query } from "@/lib/api";
+import { useApiMutation, useApiPagedQuery } from "@/lib/query";
+import { useDebouncedValue } from "@/lib/use-debounced";
 import type { ClassCourseDto, PagedResult } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
+
+const PAGE_SIZE = 10;
+
+const CLASS_FIELDS: FieldSpec[] = [
+  { name: "name", label: "Class / Course Name", type: "text", required: true, placeholder: "e.g. Science Batch A" },
+  { name: "code", label: "Code", type: "text", required: true, placeholder: "e.g. SCI-A", hint: "Short unique identifier, e.g. SCI-A." },
+  { name: "description", label: "Description", type: "textarea", placeholder: "Optional context for this class…" },
+];
 
 export default function AdminClassesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [failure, setFailure] = useState<unknown>(null);
-  const [draft, setDraft] = useState({ name: "", code: "" });
+  const debouncedSearch = useDebouncedValue(search);
+  const [createOpen, setCreateOpen] = useState(false);
 
-  const { data, error, loading, reload } = useApi<PagedResult<ClassCourseDto>>(
-    () => api.get<PagedResult<ClassCourseDto>>(`/classes${query({ page, pageSize: 10, search })}`),
-    [page, search],
+  const { data } = useApiPagedQuery<ClassCourseDto>(
+    ["admin", "classes"],
+    { page, pageSize: PAGE_SIZE, search: debouncedSearch },
+    () =>
+      api.get<PagedResult<ClassCourseDto>>(
+        `/classes${query({ page, pageSize: PAGE_SIZE, search: debouncedSearch })}`,
+      ),
   );
 
-  const remove = async (row: ClassCourseDto) => {
-    // The API refuses when the class still has enrolments, rather than cascading students
-    // away with it — so say that up front.
-    const warning =
-      row.enrollmentCount > 0
-        ? `${row.code} has ${row.enrollmentCount} enrolment(s) and cannot be deleted while they exist.`
-        : `Delete ${row.code}? This cannot be undone.`;
+  const rows = data?.items ?? [];
+  const totalCount = data?.totalCount ?? 0;
 
-    if (!window.confirm(warning)) {
-      return;
-    }
+  const createClass = useApiMutation<unknown, Record<string, string>>({
+    mutationFn: (values) =>
+      api.post("/classes", {
+        name: values.name,
+        code: values.code,
+        description: values.description,
+      }),
+    invalidate: [["admin", "classes"], ["admin", "classes", "count"]],
+    successMessage: (_, values) => `${values.name} has been created.`,
+  });
 
-    setFailure(null);
+  const totalSubjects = rows.reduce((sum, row) => sum + row.subjectCount, 0);
+  const totalEnrolments = rows.reduce((sum, row) => sum + row.enrollmentCount, 0);
 
-    try {
-      await api.del(`/classes/${row.id}`);
-      reload();
-    } catch (cause) {
-      setFailure(cause);
-    }
-  };
-
-  const columns: Column<ClassCourseDto>[] = [
+  const columns: SortableColumn<ClassCourseDto>[] = [
     {
-      header: "Class",
-      cell: (row) => (
+      key: "name",
+      header: "Class / Course",
+      sortValue: (row) => row.name.toLowerCase(),
+      render: (row) => (
         <div>
-          <p className="font-medium text-slate-900 dark:text-white">{row.name}</p>
-          <p className="font-mono text-xs text-slate-500">{row.code}</p>
+          <p className="font-semibold text-white">{row.name}</p>
+          <p className="mt-0.5 font-mono text-xs text-slate-500">{row.code}</p>
         </div>
       ),
     },
-    { header: "Subjects", align: "right", cell: (row) => row.subjectCount },
-    { header: "Students", align: "right", cell: (row) => row.enrollmentCount },
     {
-      header: "",
-      align: "right",
-      cell: (row) => (
-        <Button variant="ghost" onClick={() => void remove(row)}>
-          Delete
-        </Button>
-      ),
+      key: "subjectCount",
+      header: "Subjects",
+      sortValue: (row) => row.subjectCount,
+      render: (row) => <Badge tone="blue">{row.subjectCount} bound</Badge>,
+    },
+    {
+      key: "enrollmentCount",
+      header: "Enrolments",
+      sortValue: (row) => row.enrollmentCount,
+      render: (row) => <Badge tone="green">{row.enrollmentCount} students</Badge>,
     },
   ];
 
   return (
-    <>
-      <PageHeader title="Classes" description="Classes and courses students are enrolled into." />
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+      <PageHeader
+        eyebrow="Administrator"
+        title="Classes & Courses"
+        description="The containers every subject, assignment and enrolment hangs from."
+        action={
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden />
+            New Class
+          </Button>
+        }
+      />
 
-      <ErrorBanner error={failure} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard title="Total Classes" value={totalCount} tone="amber" icon={Building2} />
+        <StatCard title="Subjects Bound" value={totalSubjects} tone="sky" />
+        <StatCard title="Enrolled Students" value={totalEnrolments} tone="emerald" />
+      </div>
 
-      <CreatePanel
-        title="Add class"
-        submitLabel="Create class"
-        onSubmit={async () => {
-          await api.post("/classes", draft);
-        }}
-        onCreated={() => {
-          setDraft({ name: "", code: "" });
-          reload();
-        }}
-      >
-        <TextField
-          label="Name"
-          placeholder="Computer Science 101"
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        />
-        <TextField
-          label="Code"
-          placeholder="CS-101"
-          hint="Must be unique."
-          value={draft.code}
-          onChange={(e) => setDraft({ ...draft, code: e.target.value })}
-        />
-      </CreatePanel>
-
-      <Card className="space-y-4">
-        <div className="max-w-sm">
+      <Card className="mt-8 space-y-5 p-5">
+        <div className="w-full max-w-md">
           <TextField
-            label="Search"
-            placeholder="Name or code"
+            label="Search Classes"
+            placeholder="Search by name or code…"
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -113,17 +113,27 @@ export default function AdminClassesPage() {
           />
         </div>
 
-        <DataTable
-          rows={data?.items}
+        <SortableDataTable
           columns={columns}
-          loading={loading}
-          error={error}
-          rowKey={(row) => row.id}
-          empty="No classes yet"
+          rows={rows}
+          loading={data === undefined}
+          emptyTitle="No classes found"
+          emptyHint="Create the first class to start structuring the institution."
+          emptyIcon={Building2}
         />
 
-        {data && <Pagination page={data} onPageChange={setPage} />}
+        <Pagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} onPageChange={setPage} />
       </Card>
-    </>
+
+      <CreatePanel
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New Class / Course"
+        description="A class groups subjects and students; assignments publish against it."
+        fields={CLASS_FIELDS}
+        submitLabel="Create Class"
+        onSubmit={createClass.mutateAsync}
+      />
+    </div>
   );
 }

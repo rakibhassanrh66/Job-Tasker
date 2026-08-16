@@ -14,7 +14,7 @@ import { Spinner } from "./ui";
  *
  * This is convenience, not security. Every endpoint behind these screens enforces its own
  * role gate server-side — see AuthorizationMatrixTests, which asserts exactly that for all
- * 41 routes — so a user who defeats this guard reaches pages that then answer 403 to every
+ * 42 routes (11 public + 31 protected) — so a user who defeats this guard reaches pages that then answer 403 to every
  * request they make. Its job is to send people somewhere useful instead of showing them a
  * screen full of errors.
  */

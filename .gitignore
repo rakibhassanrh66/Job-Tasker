@@ -51,3 +51,26 @@ desktop.ini
 
 # ---- Docker ----
 .docker/
+
+# ---- AI agent tooling (skills CLI artifacts; not project code) ----
+.agents/
+.aider-desk/
+.augment/
+.autohand/
+.bob/
+.claude/
+.codeartsdoer/
+.codebuddy/
+.codemaker/
+.codestudio/
+.commandcode/
+.continue/
+.devin/
+.hermes/
+.minimax/
+.opencode/
+skills/
+skills-lock.json
+
+# ---- Local data (unrelated to the named db volume) ----
+data/

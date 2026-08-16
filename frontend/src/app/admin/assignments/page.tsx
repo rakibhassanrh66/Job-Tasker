@@ -3,112 +3,155 @@
 
 "use client";
 
+import { CalendarClock, Files, Inbox } from "lucide-react";
 import { useState } from "react";
-import { DataTable, type Column } from "@/components/data-table";
+import { SortableDataTable, type SortableColumn } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
 import { AssignmentStatusBadge } from "@/components/status-badge";
-import { Card, PageHeader, SelectField, TextField } from "@/components/ui";
+import { Card, PageHeader, SelectField, StatCard, TextField } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { formatDateTime, isPast } from "@/lib/format";
-import {
-  AssignmentStatus,
-  assignmentStatusLabels,
-  type AssignmentDto,
-  type PagedResult,
-} from "@/lib/types";
-import { useApi } from "@/lib/use-api";
+import { useApiPagedQuery } from "@/lib/query";
+import { useDebouncedValue } from "@/lib/use-debounced";
+import { AssignmentStatus, assignmentStatusLabels, type AssignmentDto, type PagedResult } from "@/lib/types";
 
-/**
- * Every assignment in the system, at any status.
- *
- * Read-only. An admin oversees the system rather than teaching in it, and editing another
- * teacher's work would cut across business rule 4 — the API would refuse it anyway.
- */
+const PAGE_SIZE = 10;
+
 export default function AdminAssignmentsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
 
-  const { data, error, loading } = useApi<PagedResult<AssignmentDto>>(
+  const { data } = useApiPagedQuery<AssignmentDto>(
+    ["admin", "assignments"],
+    { page, pageSize: PAGE_SIZE, search: debouncedSearch, status: status || undefined },
     () =>
       api.get<PagedResult<AssignmentDto>>(
-        `/assignments${query({ page, pageSize: 10, search, status: status || undefined })}`,
+        `/assignments${query({ page, pageSize: PAGE_SIZE, search: debouncedSearch, status: status || undefined })}`,
       ),
-    [page, search, status],
   );
 
-  const columns: Column<AssignmentDto>[] = [
+  const rows = data?.items ?? [];
+  const totalCount = data?.totalCount ?? 0;
+
+const publishedCount = rows.filter((row) => row.status === AssignmentStatus.Published).length;
+const draftCount = rows.filter((row) => row.status === AssignmentStatus.Draft).length;
+
+  const columns: SortableColumn<AssignmentDto>[] = [
     {
+      key: "title",
       header: "Assignment",
-      cell: (row) => (
+      sortValue: (row) => row.title.toLowerCase(),
+      render: (row) => (
         <div>
-          <p className="font-medium text-slate-900 dark:text-white">{row.title}</p>
+          <p className="font-semibold text-white">{row.title}</p>
           <p className="mt-0.5 text-xs text-slate-500">
-            {row.subjectName} · {row.classCourseCode}
+            {row.subjectName} · <span className="font-mono">{row.classCourseCode}</span>
           </p>
         </div>
       ),
     },
-    { header: "Teacher", secondary: true, cell: (row) => row.createdByTeacherName },
     {
+      key: "createdByTeacherName",
+      header: "Teacher",
+      sortValue: (row) => row.createdByTeacherName.toLowerCase(),
+      render: (row) => <p className="font-medium text-slate-300">{row.createdByTeacherName}</p>,
+      hideBelow: "sm",
+    },
+    {
+      key: "deadline",
       header: "Deadline",
-      secondary: true,
-      cell: (row) => (
-        <span className={isPast(row.deadline) ? "text-red-600" : undefined}>
+      sortValue: (row) => row.deadline,
+      render: (row) => (
+        <span className={isPast(row.deadline) ? "text-slate-500" : "text-slate-200"}>
           {formatDateTime(row.deadline)}
         </span>
       ),
+      hideBelow: "sm",
     },
-    { header: "Status", cell: (row) => <AssignmentStatusBadge status={row.status} /> },
-    { header: "Submissions", align: "right", cell: (row) => row.submissionCount },
+    {
+      key: "maxMarks",
+      header: "Max",
+      sortValue: (row) => row.maxMarks,
+      render: (row) => <span className="font-mono text-slate-300">{row.maxMarks}</span>,
+    },
+    {
+      key: "submissionCount",
+      header: "Subs",
+      sortValue: (row) => row.submissionCount,
+      render: (row) => (
+        <span className="inline-flex items-center gap-1.5 font-mono text-slate-300">
+          <Inbox className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+          {row.submissionCount}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      sortValue: (row) => assignmentStatusLabels[row.status],
+      render: (row) => <AssignmentStatusBadge status={row.status} />,
+    },
   ];
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
       <PageHeader
-        title="All assignments"
-        description="Every assignment in the system, for oversight. Read-only."
+        eyebrow="Administrator"
+        title="All Assignments"
+        description="Read-only oversight of everything published across the institution."
       />
 
-      <Card className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:max-w-xl">
-          <TextField
-            label="Search"
-            placeholder="Filter by title"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-          />
-          <SelectField
-            label="Status"
-            value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All statuses</option>
-            {Object.values(AssignmentStatus).map((value) => (
-              <option key={value} value={value}>
-                {assignmentStatusLabels[value]}
-              </option>
-            ))}
-          </SelectField>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard title="Total Assignments" value={totalCount} tone="amber" icon={Files} />
+        <StatCard title="Published (this page)" value={publishedCount} tone="emerald" />
+        <StatCard title="Drafts (this page)" value={draftCount} tone="slate" />
+      </div>
+
+      <Card className="mt-8 space-y-5 p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="w-full max-w-md">
+            <TextField
+              label="Search Assignments"
+              placeholder="Search by title, subject or teacher…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
+          <div className="w-full max-w-xs">
+            <SelectField
+              label="Filter by Status"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All Statuses</option>
+              {Object.values(AssignmentStatus).map((value) => (
+                <option key={value} value={value}>
+                  {assignmentStatusLabels[value]}
+                </option>
+              ))}
+            </SelectField>
+          </div>
         </div>
 
-        <DataTable
-          rows={data?.items}
+        <SortableDataTable
           columns={columns}
-          loading={loading}
-          error={error}
-          rowKey={(row) => row.id}
-          empty="No assignments yet"
+          rows={rows}
+          loading={data === undefined}
+          emptyTitle="No assignments found"
+          emptyHint="Adjust the filters, or wait for teachers to publish new work."
+          emptyIcon={CalendarClock}
         />
 
-        {data && <Pagination page={data} onPageChange={setPage} />}
+        <Pagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} onPageChange={setPage} />
       </Card>
-    </>
+    </div>
   );
 }

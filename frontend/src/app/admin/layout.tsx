@@ -3,24 +3,14 @@
 
 "use client";
 
-import { AppShell, type NavItem } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { RequireRole } from "@/components/require-role";
 import { UserRole } from "@/lib/types";
 
-const nav: NavItem[] = [
-  { href: "/admin/users", label: "Users" },
-  { href: "/admin/classes", label: "Classes" },
-  { href: "/admin/subjects", label: "Subjects" },
-  { href: "/admin/allocations", label: "Teacher allocations" },
-  { href: "/admin/enrolments", label: "Enrolments" },
-  { href: "/admin/assignments", label: "Assignments" },
-  { href: "/admin/submissions", label: "Submissions" },
-];
-
-export default function AdminLayout({ children }: LayoutProps<"/admin">) {
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireRole roles={[UserRole.Admin]}>
-      <AppShell nav={nav}>{children}</AppShell>
+      <AppShell>{children}</AppShell>
     </RequireRole>
   );
 }

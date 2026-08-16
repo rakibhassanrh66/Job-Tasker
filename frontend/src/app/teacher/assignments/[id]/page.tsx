@@ -4,11 +4,13 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ArrowLeft, Inbox, Send, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { ConfirmDialog } from "@/components/modal";
 import { AssignmentStatusBadge } from "@/components/status-badge";
 import {
   Button,
@@ -23,8 +25,8 @@ import {
 } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, fromLocalInputValue, toLocalInputValue } from "@/lib/format";
+import { useApiMutation, useApiQuery } from "@/lib/query";
 import { AssignmentStatus, type AssignmentDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
 
 // No subject or class here: UpdateAssignmentRequest deliberately omits them. Moving work
 // to a different class after students have submitted would orphan their submissions.
@@ -44,9 +46,12 @@ export default function EditAssignmentPage() {
   const router = useRouter();
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const assignment = useApi<AssignmentDto>(() => api.get<AssignmentDto>(`/assignments/${id}`), [id]);
+  const assignment = useApiQuery<AssignmentDto>(
+    ["assignments", id],
+    () => api.get<AssignmentDto>(`/assignments/${id}`),
+  );
 
   const {
     register,
@@ -69,16 +74,54 @@ export default function EditAssignmentPage() {
     }
   }, [assignment.data, reset]);
 
-  if (assignment.loading) {
+  // Hooks stay above the early returns so their order is stable across renders.
+  const save = useApiMutation<AssignmentDto, FormValues>({
+    mutationFn: (values) =>
+      api.put<AssignmentDto>(`/assignments/${id}`, {
+        title: values.title,
+        description: values.description,
+        deadline: fromLocalInputValue(values.deadline),
+        maxMarks: values.maxMarks,
+        allowLateSubmission: values.allowLateSubmission,
+        allowUpdateBeforeDeadline: values.allowUpdateBeforeDeadline,
+      }),
+    invalidate: [["assignments", id], ["teacher", "assignments"], ["admin", "assignments"]],
+    onError: (cause) => {
+      if (cause instanceof ApiError && cause.status === 422) {
+        for (const [field, message] of Object.entries(cause.fieldErrors)) {
+          if (field in schema.shape) {
+            setError(field as keyof FormValues, { message });
+          }
+        }
+      }
+    },
+  });
+
+  const publish = useApiMutation<unknown, void>({
+    mutationFn: () => api.post(`/assignments/${id}/publish`),
+    invalidate: [["assignments", id], ["teacher", "assignments"], ["teacher", "pending"]],
+    successMessage: "Assignment published.",
+  });
+
+  const remove = useApiMutation<unknown, void>({
+    mutationFn: () => api.del(`/assignments/${id}`),
+    onSuccess: () => router.push("/teacher/assignments"),
+  });
+
+  if (assignment.isLoading) {
     return (
-      <div className="flex justify-center py-16">
-        <Spinner />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner label="Loading assignment" />
       </div>
     );
   }
 
   if (assignment.error || !assignment.data) {
-    return <ErrorBanner error={assignment.error ?? "Assignment not found."} />;
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 py-12">
+        <ErrorBanner error={assignment.error ?? "Assignment not found."} />
+      </div>
+    );
   }
 
   const item = assignment.data;
@@ -89,93 +132,61 @@ export default function EditAssignmentPage() {
     setSaved(false);
 
     try {
-      await api.put<AssignmentDto>(`/assignments/${id}`, {
-        title: values.title,
-        description: values.description,
-        deadline: fromLocalInputValue(values.deadline),
-        maxMarks: values.maxMarks,
-        allowLateSubmission: values.allowLateSubmission,
-        allowUpdateBeforeDeadline: values.allowUpdateBeforeDeadline,
-      });
-
+      await save.mutateAsync(values);
       setSaved(true);
-      assignment.reload();
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 422) {
-        for (const [field, message] of Object.entries(cause.fieldErrors)) {
-          if (field in schema.shape) {
-            setError(field as keyof FormValues, { message });
-          }
-        }
-      }
-
       setFailure(cause);
     }
   });
 
-  const publish = async () => {
-    setBusy(true);
-    setFailure(null);
-
-    try {
-      await api.post(`/assignments/${id}/publish`);
-      assignment.reload();
-    } catch (cause) {
-      setFailure(cause);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!window.confirm(`Delete "${item.title}"? This cannot be undone.`)) {
-      return;
-    }
-
-    setBusy(true);
-    setFailure(null);
-
-    try {
-      await api.del(`/assignments/${id}`);
-      router.push("/teacher/assignments");
-    } catch (cause) {
-      // The API refuses when submissions exist, rather than cascading them away.
-      setFailure(cause);
-      setBusy(false);
-    }
-  };
-
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+      <Link
+        href="/teacher/assignments"
+        className="mt-6 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 transition-colors duration-150 hover:text-accent-400"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        My assignments
+      </Link>
+
       <PageHeader
+        eyebrow="Teacher"
         title={item.title}
         description={`${item.subjectName} · ${item.classCourseCode}`}
         action={
           <div className="flex flex-wrap gap-2">
             <Link href={`/teacher/assignments/${id}/submissions`}>
-              <Button variant="secondary">Submissions ({item.submissionCount})</Button>
+              <Button variant="secondary">
+                <Inbox className="h-4 w-4" aria-hidden />
+                Submissions ({item.submissionCount})
+              </Button>
             </Link>
             {item.status === AssignmentStatus.Draft && (
-              <Button disabled={busy} onClick={() => void publish()}>
-                Publish
+              <Button
+                disabled={publish.isPending}
+                onClick={() => void publish.mutateAsync()}
+              >
+                <Send className="h-4 w-4" aria-hidden />
+                {publish.isPending ? "Publishing…" : "Publish"}
               </Button>
             )}
-            <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+            <Button variant="ghost" disabled={remove.isPending} onClick={() => setDeleteOpen(true)}>
+              <Trash2 className="h-4 w-4 text-red-400" aria-hidden />
               Delete
             </Button>
           </div>
         }
       />
 
-      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 dark:text-slate-400">
+      <div className="flex flex-wrap items-center gap-3 pb-6 text-sm text-slate-500">
         <AssignmentStatusBadge status={item.status} />
         <span>Created {formatDateTime(item.createdAt)}</span>
         <span>·</span>
         <span>Updated {formatDateTime(item.updatedAt)}</span>
       </div>
 
-      <Card className="max-w-2xl">
-        <form onSubmit={onSubmit} className="space-y-4" noValidate>
+      <Card className="max-w-2xl p-6">
+        <form onSubmit={onSubmit} className="space-y-5" noValidate>
           {saved && <SuccessBanner>Changes saved.</SuccessBanner>}
           <ErrorBanner error={failure} />
 
@@ -218,6 +229,15 @@ export default function EditAssignmentPage() {
           </Button>
         </form>
       </Card>
-    </>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={() => void remove.mutateAsync()}
+        title="Delete assignment"
+        message={`Delete "${item.title}"? This cannot be undone. The API refuses if students have already submitted.`}
+        confirmLabel="Delete"
+      />
+    </div>
   );
 }

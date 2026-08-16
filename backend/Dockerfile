@@ -19,8 +19,11 @@ COPY tests/AssignmentSystem.IntegrationTests/*.csproj  tests/AssignmentSystem.In
 RUN dotnet restore AssignmentSystem.sln
 
 COPY . .
+# Publish restores its own single-project graph. The earlier solution-level restore populates
+# the package cache, so this is cheap — and a "--no-restore" publish can race a partial
+# solution restore (NETSDK1064: Microsoft.CodeAnalysis.Analyzers missing) under network load.
 RUN dotnet publish src/AssignmentSystem.Api/AssignmentSystem.Api.csproj \
-    -c Release -o /app/publish --no-restore
+    -c Release -o /app/publish
 
 # ---- runtime ----
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final

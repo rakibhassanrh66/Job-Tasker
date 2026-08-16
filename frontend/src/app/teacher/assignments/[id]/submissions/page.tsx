@@ -3,24 +3,29 @@
 
 "use client";
 
+import { ArrowLeft, Eye, Inbox } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { DataTable, type Column } from "@/components/data-table";
+import { SortableDataTable, type SortableColumn } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
 import { SubmissionStatusBadge } from "@/components/status-badge";
 import {
+  Badge,
   Button,
   Card,
   ErrorBanner,
   PageHeader,
+  ProgressBar,
   SelectField,
-  SuccessBanner,
+  Spinner,
+  StatCard,
   TextAreaField,
   TextField,
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { useApiMutation, useApiPagedQuery, useApiQuery } from "@/lib/query";
 import {
   SubmissionStatus,
   submissionStatusLabels,
@@ -28,97 +33,160 @@ import {
   type PagedResult,
   type SubmissionDto,
 } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
+
+const PAGE_SIZE = 10;
 
 /**
- * The grading queue for one assignment.
+ * Legal lifecycle transitions, mirrored from SubmissionStatusPolicy.cs. A transition the
+ * backend would reject is simply never offered — the dropdown only ever shows states the
+ * API will accept for the submission's current status (F1).
  *
- * Marking happens in a panel beside the list rather than on its own page, because a marker
- * works through a queue and a round trip per submission would be the slowest part of the
- * job. The status control is separate from grading on purpose: entering marks *is* the
- * review, so grading moves a submission to Graded by itself, while the status dropdown
- * covers the transitions that are not grading — putting something under review, or
- * returning it.
+ *   Submitted | Late      → UnderReview | Graded | Returned
+ *   UnderReview            → Graded | Returned
+ *   Graded                 → Returned
+ *   Returned               → (terminal)
  */
+const LEGAL_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
+  [SubmissionStatus.Submitted]: [
+    SubmissionStatus.UnderReview,
+    SubmissionStatus.Graded,
+    SubmissionStatus.Returned,
+  ],
+  [SubmissionStatus.Late]: [
+    SubmissionStatus.UnderReview,
+    SubmissionStatus.Graded,
+    SubmissionStatus.Returned,
+  ],
+  [SubmissionStatus.UnderReview]: [SubmissionStatus.Graded, SubmissionStatus.Returned],
+  [SubmissionStatus.Graded]: [SubmissionStatus.Returned],
+  [SubmissionStatus.Returned]: [],
+};
+
 export default function AssignmentSubmissionsPage() {
   const { id } = useParams<{ id: string }>();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<SubmissionDto | null>(null);
 
-  const assignment = useApi<AssignmentDto>(() => api.get<AssignmentDto>(`/assignments/${id}`), [id]);
-
-  const submissions = useApi<PagedResult<SubmissionDto>>(
-    () =>
-      api.get<PagedResult<SubmissionDto>>(
-        `/assignments/${id}/submissions${query({ page, pageSize: 10, status: status || undefined })}`,
-      ),
-    [id, page, status],
+  const assignment = useApiQuery<AssignmentDto>(
+    ["assignments", id],
+    () => api.get<AssignmentDto>(`/assignments/${id}`),
   );
 
-  const columns: Column<SubmissionDto>[] = [
+  const submissions = useApiPagedQuery<SubmissionDto>(
+    ["assignments", id, "submissions"],
+    { page, pageSize: PAGE_SIZE, status: status || undefined },
+    () =>
+      api.get<PagedResult<SubmissionDto>>(
+        `/assignments/${id}/submissions${query({ page, pageSize: PAGE_SIZE, status: status || undefined })}`,
+      ),
+  );
+
+  const rows = submissions.data?.items ?? [];
+  const totalCount = submissions.data?.totalCount ?? 0;
+  const gradedCount = rows.filter(
+    (row) => row.status === SubmissionStatus.Graded || row.marks !== null,
+  ).length;
+  const pendingCount = rows.filter((row) => row.marks === null).length;
+
+  const columns: SortableColumn<SubmissionDto>[] = [
     {
+      key: "studentName",
       header: "Student",
-      cell: (row) => (
-        <div>
-          <p className="font-medium text-slate-900 dark:text-white">{row.studentName}</p>
-          <p className="text-xs text-slate-500">{row.studentEmail}</p>
+      sortValue: (row) => row.studentName.toLowerCase(),
+      render: (row) => (
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-ink-850 text-[11px] font-bold text-slate-300">
+            {row.studentName.slice(0, 2).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-white">{row.studentName}</p>
+            <p className="truncate font-mono text-xs text-slate-500">{row.studentEmail}</p>
+          </div>
         </div>
       ),
     },
     {
+      key: "submittedAt",
       header: "Submitted",
-      secondary: true,
-      cell: (row) => formatDateTime(row.submittedAt),
+      sortValue: (row) => row.submittedAt,
+      render: (row) => formatDateTime(row.submittedAt),
+      hideBelow: "sm",
     },
-    { header: "Status", cell: (row) => <SubmissionStatusBadge status={row.status} /> },
     {
-      header: "Marks",
-      align: "right",
-      cell: (row) =>
+      key: "status",
+      header: "Status",
+      sortValue: (row) => submissionStatusLabels[row.status],
+      render: (row) => <SubmissionStatusBadge status={row.status} />,
+    },
+    {
+      key: "marks",
+      header: "Score",
+      sortValue: (row) => row.marks ?? -1,
+      render: (row) =>
         row.marks === null ? (
-          <span className="text-slate-400">—</span>
+          <span className="text-xs font-medium text-slate-500">Ungraded</span>
         ) : (
-          <span className="font-medium">
-            {row.marks} / {row.maxMarks}
+          <span className="font-bold text-accent-400">
+            {row.marks} <span className="text-xs font-normal text-slate-500">/ {row.maxMarks}</span>
           </span>
         ),
     },
     {
+      key: "action",
       header: "",
-      align: "right",
-      cell: (row) => (
-        <Button variant="secondary" onClick={() => setSelected(row)}>
-          {row.marks === null ? "Mark" : "Review"}
+      className: "text-right",
+      render: (row) => (
+        <Button
+          variant={row.marks === null ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => setSelected(row)}
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden />
+          {row.marks === null ? "Mark & Grade" : "Review Grade"}
         </Button>
       ),
     },
   ];
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+      <Link
+        href={`/teacher/assignments/${id}`}
+        className="mt-6 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 transition-colors duration-150 hover:text-accent-400"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        Back to assignment
+      </Link>
+
       <PageHeader
-        title="Submissions"
-        description={assignment.data ? assignment.data.title : undefined}
-        action={
-          <Link href={`/teacher/assignments/${id}`}>
-            <Button variant="secondary">Back to assignment</Button>
-          </Link>
+        eyebrow="Teacher"
+        title="Student Submissions & Grading"
+        description={
+          assignment.data
+            ? `Reviewing submissions for: ${assignment.data.title}`
+            : undefined
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="space-y-4 lg:col-span-2">
-          <div className="max-w-xs">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard title="Total Submissions" value={totalCount} tone="amber" icon={Inbox} />
+        <StatCard title="Graded Work (this page)" value={gradedCount} tone="emerald" />
+        <StatCard title="Pending Review (this page)" value={pendingCount} tone="sky" />
+      </div>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-3">
+        <Card className="space-y-5 p-5 lg:col-span-2">
+          <div className="w-full max-w-xs">
             <SelectField
-              label="Status"
+              label="Filter by Status"
               value={status}
               onChange={(event) => {
                 setStatus(event.target.value);
                 setPage(1);
               }}
             >
-              <option value="">All statuses</option>
+              <option value="">All Statuses</option>
               {Object.values(SubmissionStatus).map((value) => (
                 <option key={value} value={value}>
                   {submissionStatusLabels[value]}
@@ -127,214 +195,274 @@ export default function AssignmentSubmissionsPage() {
             </SelectField>
           </div>
 
-          <DataTable
-            rows={submissions.data?.items}
+          <SortableDataTable
             columns={columns}
-            loading={submissions.loading}
-            error={submissions.error}
-            rowKey={(row) => row.id}
-            empty="Nothing submitted yet"
-            emptyHint="Submissions appear here as students hand work in."
+            rows={rows}
+            loading={submissions.data === undefined}
+            emptyTitle="No submissions yet"
+            emptyHint="Submissions appear here as students turn in their coursework."
+            emptyIcon={Inbox}
           />
 
-          {submissions.data && <Pagination page={submissions.data} onPageChange={setPage} />}
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            totalCount={totalCount}
+            onPageChange={setPage}
+          />
         </Card>
 
         <div>
           {selected ? (
             <GradePanel
+              key={selected.id}
               submission={selected}
               onClose={() => setSelected(null)}
-              onSaved={() => {
-                setSelected(null);
-                submissions.reload();
-                assignment.reload();
-              }}
             />
           ) : (
-            <Card>
-              <p className="text-sm text-slate-500">
-                Choose a submission to read the answer and enter marks.
+            <Card className="flex flex-col items-center justify-center border-dashed p-8 text-center">
+              <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-md border border-line bg-ink-850 text-slate-500">
+                <Eye className="h-6 w-6" aria-hidden />
+              </span>
+              <p className="text-sm font-semibold text-slate-200">No Submission Selected</p>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-500">
+                Select a submission from the list to review the answer text, inspect
+                attachments, and enter marks.
               </p>
             </Card>
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
 function GradePanel({
   submission,
   onClose,
-  onSaved,
 }: {
   submission: SubmissionDto;
   onClose: () => void;
-  onSaved: () => void;
 }) {
   const [marks, setMarks] = useState(submission.marks?.toString() ?? "");
   const [feedback, setFeedback] = useState(submission.feedback ?? "");
   const [nextStatus, setNextStatus] = useState("");
   const [failure, setFailure] = useState<unknown>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  // The API refuses to grade something already graded — one mark, entered once — so the
-  // form says so rather than offering a button that can only 409.
   const alreadyGraded =
-    submission.status === SubmissionStatus.Graded || submission.status === SubmissionStatus.Returned;
+    submission.status === SubmissionStatus.Graded
+    || submission.status === SubmissionStatus.Returned;
 
   const numeric = Number(marks);
   const marksValid =
     marks !== "" && Number.isInteger(numeric) && numeric >= 0 && numeric <= submission.maxMarks;
 
-  const grade = async () => {
-    setBusy(true);
-    setFailure(null);
-    setSaved(null);
+  const legalTransitions = LEGAL_TRANSITIONS[submission.status] ?? [];
 
-    try {
-      await api.put(`/submissions/${submission.id}/grade`, {
+  const saveGrade = useApiMutation<unknown, void>({
+    mutationFn: () =>
+      api.put(`/submissions/${submission.id}/grade`, {
         marks: numeric,
         feedback: feedback === "" ? null : feedback,
-      });
+      }),
+    invalidate: [
+      ["assignments", submission.assignmentId, "submissions"],
+      ["assignments", submission.assignmentId],
+      ["admin", "submissions"],
+    ],
+    successMessage: `Graded ${submission.studentName}: ${numeric} / ${submission.maxMarks}`,
+    onSuccess: () => onClose(),
+  });
 
-      setSaved("Marks saved.");
-      onSaved();
-    } catch (cause) {
-      setFailure(cause);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const changeStatus = useApiMutation<unknown, void>({
+    mutationFn: () =>
+      api.put(`/submissions/${submission.id}/status`, { status: Number(nextStatus) }),
+    invalidate: [
+      ["assignments", submission.assignmentId, "submissions"],
+      ["admin", "submissions"],
+    ],
+    successMessage: () => `Status updated to ${submissionStatusLabels[Number(nextStatus) as SubmissionStatus]}.`,
+    onSuccess: () => {
+      setNextStatus("");
+      onClose();
+    },
+  });
 
-  const changeStatus = async () => {
-    setBusy(true);
-    setFailure(null);
-    setSaved(null);
-
-    try {
-      await api.put(`/submissions/${submission.id}/status`, { status: Number(nextStatus) });
-
-      setSaved("Status updated.");
-      onSaved();
-    } catch (cause) {
-      setFailure(cause);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const busy = saveGrade.isPending || changeStatus.isPending;
 
   return (
-    <Card className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
+    <Card className="space-y-5 p-5">
+      <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
         <div>
-          <h2 className="text-sm font-medium text-slate-900 dark:text-white">
-            {submission.studentName}
-          </h2>
-          <p className="text-xs text-slate-500">{formatDateTime(submission.submittedAt)}</p>
+          <h2 className="text-base font-bold text-white">{submission.studentName}</h2>
+          <p className="mt-0.5 text-xs text-slate-500">{formatDateTime(submission.submittedAt)}</p>
         </div>
-        <Button variant="ghost" onClick={onClose}>
+        <Button variant="ghost" size="sm" onClick={onClose}>
           Close
         </Button>
       </div>
 
-      <SubmissionStatusBadge status={submission.status} />
+      <div className="flex items-center justify-between">
+        <SubmissionStatusBadge status={submission.status} />
+        {submission.marks !== null && (
+          <Badge tone="green">
+            Grade: {Math.round((submission.marks / submission.maxMarks) * 100)}%
+          </Badge>
+        )}
+      </div>
 
-      {saved && <SuccessBanner>{saved}</SuccessBanner>}
       <ErrorBanner error={failure} />
 
+      {/* Answer preview */}
       <div>
-        <p className="text-xs text-slate-500">Answer</p>
-        <p className="mt-1 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap text-slate-800 dark:text-slate-200">
-          {submission.answerText}
+        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">
+          Student Answer
         </p>
+        <div className="max-h-56 overflow-y-auto rounded-md border border-line bg-ink-950/60 p-3.5">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
+            {submission.answerText}
+          </p>
+        </div>
       </div>
 
       {submission.attachmentUrl && (
-        <a
-          href={submission.attachmentUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-sm text-blue-700 underline underline-offset-2 dark:text-blue-400"
-        >
-          Open attachment
-        </a>
+        <div className="rounded-md border border-line bg-ink-850/60 p-3.5">
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+            Attached Resource
+          </p>
+          <a
+            href={submission.attachmentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 block truncate font-mono text-xs text-accent-400 transition-colors duration-150 hover:text-accent-300 hover:underline"
+          >
+            {submission.attachmentUrl}
+          </a>
+        </div>
       )}
 
-      <hr className="border-slate-200 dark:border-slate-700" />
+      <hr className="border-line" />
 
       {alreadyGraded ? (
-        <div className="space-y-2 text-sm">
-          <p className="font-medium text-slate-700 dark:text-slate-200">
-            Marked {submission.marks} / {submission.maxMarks}
-          </p>
+        <div className="space-y-3 rounded-md border border-emerald-500/40 bg-emerald-950/30 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-300">
+              Evaluated Score
+            </span>
+            <span className="text-lg font-bold text-emerald-300">
+              {submission.marks} / {submission.maxMarks}
+            </span>
+          </div>
+
+          <ProgressBar value={submission.marks ?? 0} max={submission.maxMarks} tone="emerald" />
+
           {submission.feedback && (
-            <p className="whitespace-pre-wrap text-slate-600 dark:text-slate-400">
-              {submission.feedback}
-            </p>
+            <div className="mt-2 text-sm">
+              <span className="font-semibold text-slate-300">Teacher Feedback:</span>
+              <p className="mt-1 whitespace-pre-wrap text-slate-400">{submission.feedback}</p>
+            </div>
           )}
+
           {submission.gradedByTeacherName && (
-            <p className="text-xs text-slate-500">
-              by {submission.gradedByTeacherName}
-              {submission.gradedAt ? ` · ${formatDateTime(submission.gradedAt)}` : ""}
+            <p className="pt-1 text-[11px] text-slate-500">
+              Marked by {submission.gradedByTeacherName}
+              {submission.gradedAt ? ` on ${formatDateTime(submission.gradedAt)}` : ""}
             </p>
           )}
         </div>
       ) : (
-        <div className="space-y-3">
-          <TextField
-            label={`Marks (0–${submission.maxMarks})`}
-            type="number"
-            min={0}
-            max={submission.maxMarks}
-            value={marks}
-            onChange={(event) => setMarks(event.target.value)}
-            error={
-              marks !== "" && !marksValid
-                ? `Enter a whole number between 0 and ${submission.maxMarks}.`
-                : undefined
-            }
-          />
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <TextField
+              label={`Assign Marks (0 – ${submission.maxMarks})`}
+              type="number"
+              min={0}
+              max={submission.maxMarks}
+              value={marks}
+              disabled={busy}
+              onChange={(event) => setMarks(event.target.value)}
+              error={
+                marks !== "" && !marksValid
+                  ? `Enter an integer between 0 and ${submission.maxMarks}.`
+                  : undefined
+              }
+            />
+            {marksValid && (
+              <div className="pt-1">
+                <ProgressBar
+                  value={numeric}
+                  max={submission.maxMarks}
+                  label="Calculated Score"
+                  tone="amber"
+                />
+              </div>
+            )}
+          </div>
 
           <TextAreaField
-            label="Feedback"
-            rows={4}
+            label="Feedback & Comments (Optional)"
+            placeholder="Write constructive evaluation comments for the student…"
+            rows={3}
             value={feedback}
+            disabled={busy}
             onChange={(event) => setFeedback(event.target.value)}
           />
 
-          <Button disabled={busy || !marksValid} onClick={() => void grade()}>
-            {busy ? "Saving…" : "Save marks"}
+          <Button
+            className="w-full"
+            disabled={busy || !marksValid}
+            onClick={() => {
+              setFailure(null);
+              void saveGrade.mutateAsync().catch((cause) => setFailure(cause));
+            }}
+          >
+            {saveGrade.isPending ? "Saving…" : "Submit Grade & Feedback"}
           </Button>
         </div>
       )}
 
-      <hr className="border-slate-200 dark:border-slate-700" />
+      <hr className="border-line" />
 
-      <div className="space-y-3">
-        <SelectField
-          label="Change status"
-          hint="For transitions other than grading."
-          value={nextStatus}
-          onChange={(event) => setNextStatus(event.target.value)}
-        >
-          <option value="">Choose…</option>
-          {Object.values(SubmissionStatus)
-            // Late is only ever set at submission time, never transitioned into.
-            .filter((value) => value !== SubmissionStatus.Late && value !== submission.status)
-            .map((value) => (
-              <option key={value} value={value}>
-                {submissionStatusLabels[value]}
-              </option>
-            ))}
-        </SelectField>
+      {/* Lifecycle transitions — only states the policy accepts (F1) */}
+      <div className="space-y-2">
+        {legalTransitions.length === 0 ? (
+          <p className="rounded-md border border-line bg-ink-850/60 px-3 py-2.5 text-xs text-slate-500">
+            Returned submissions are terminal — no further transitions are allowed by the
+            submission policy.
+          </p>
+        ) : (
+          <>
+            <SelectField
+              label="Change Lifecycle Status"
+              hint="Only legal transitions are offered — the API rejects everything else."
+              value={nextStatus}
+              disabled={busy}
+              onChange={(event) => setNextStatus(event.target.value)}
+            >
+              <option value="">Choose Transition…</option>
+              {legalTransitions.map((value) => (
+                <option key={value} value={value}>
+                  {submissionStatusLabels[value]}
+                </option>
+              ))}
+            </SelectField>
 
-        <Button variant="secondary" disabled={busy || !nextStatus} onClick={() => void changeStatus()}>
-          Update status
-        </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={busy || !nextStatus}
+              onClick={() => {
+                setFailure(null);
+                void changeStatus.mutateAsync().catch((cause) => setFailure(cause));
+              }}
+            >
+              {changeStatus.isPending ? "Updating…" : "Update Submission Status"}
+            </Button>
+          </>
+        )}
       </div>
+
+      {busy && <Spinner label="Working…" />}
     </Card>
   );
 }

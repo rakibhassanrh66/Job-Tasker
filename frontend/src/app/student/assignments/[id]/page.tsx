@@ -4,6 +4,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ArrowLeft, CalendarClock, FileText, Send } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,11 +12,11 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { SubmissionStatusBadge } from "@/components/status-badge";
 import {
-  Badge,
   Button,
   Card,
   ErrorBanner,
   PageHeader,
+  ProgressBar,
   Spinner,
   SuccessBanner,
   TextAreaField,
@@ -23,8 +24,8 @@ import {
 } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, isPast, relativeToNow } from "@/lib/format";
+import { useApiMutation, useApiQuery } from "@/lib/query";
 import { SubmissionStatus, type StudentAssignmentDto, type SubmissionDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
 
 const schema = z.object({
   answerText: z.string().min(1, "An answer is required.").max(20000),
@@ -43,18 +44,20 @@ export default function StudentAssignmentDetailPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
 
-  const assignment = useApi<StudentAssignmentDto>(
+  const assignment = useApiQuery<StudentAssignmentDto>(
+    ["assignments", id, "student"],
     () => api.get<StudentAssignmentDto>(`/assignments/${id}`),
-    [id],
   );
 
-  // Only fetched once the assignment says there is one, so a student with no submission
-  // does not generate a guaranteed 404.
   const submissionId = assignment.data?.submissionId ?? null;
 
-  const submission = useApi<SubmissionDto | null>(
-    () => (submissionId ? api.get<SubmissionDto>(`/submissions/${submissionId}`) : Promise.resolve(null)),
-    [submissionId],
+  const submission = useApiQuery<SubmissionDto | null>(
+    ["submissions", submissionId ?? "none"],
+    () =>
+      submissionId
+        ? api.get<SubmissionDto>(`/submissions/${submissionId}`)
+        : Promise.resolve(null),
+    submissionId !== null,
   );
 
   const {
@@ -68,7 +71,6 @@ export default function StudentAssignmentDetailPage() {
     defaultValues: { answerText: "", attachmentUrl: "" },
   });
 
-  // Populate the form from an existing submission once it arrives.
   useEffect(() => {
     if (submission.data) {
       reset({
@@ -78,39 +80,64 @@ export default function StudentAssignmentDetailPage() {
     }
   }, [submission.data, reset]);
 
-  if (assignment.loading) {
+  // Hooks stay above the early returns so their order is stable across renders.
+  const saveSubmission = useApiMutation<SubmissionDto, FormValues>({
+    mutationFn: (values) => {
+      const body = {
+        answerText: values.answerText,
+        attachmentUrl: values.attachmentUrl === "" ? null : values.attachmentUrl,
+      };
+
+      return existing
+        ? api.put<SubmissionDto>(`/submissions/${existing.id}`, body)
+        : api.post<SubmissionDto>(`/assignments/${item.id}/submit`, body);
+    },
+    invalidate: [["assignments", id, "student"], ["student", "available"], ["student", "submissions"]],
+    onError: (cause) => {
+      if (cause instanceof ApiError && cause.status === 422) {
+        for (const [field, message] of Object.entries(cause.fieldErrors)) {
+          if (field === "answerText" || field === "attachmentUrl") {
+            setError(field, { message });
+          }
+        }
+      }
+    },
+  });
+
+  if (assignment.isLoading) {
     return (
-      <div className="flex justify-center py-16">
-        <Spinner />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner label="Loading assignment details" />
       </div>
     );
   }
 
   if (assignment.error || !assignment.data) {
-    return <ErrorBanner error={assignment.error ?? "Assignment not found."} />;
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 py-12">
+        <ErrorBanner error={assignment.error ?? "Assignment not found."} />
+      </div>
+    );
   }
 
   const item = assignment.data;
   const existing = submission.data;
   const closed = isPast(item.deadline);
-  const graded =
-    existing !== null &&
-    existing !== undefined &&
-    existing.status !== SubmissionStatus.Submitted &&
-    existing.status !== SubmissionStatus.Late;
 
-  /**
-   * Why the form is unavailable, if it is. Mirrors the server's rules so the reason is
-   * visible before a request rather than arriving as a 409 — the server still decides.
-   */
+  const graded =
+    existing !== null
+    && existing !== undefined
+    && existing.status !== SubmissionStatus.Submitted
+    && existing.status !== SubmissionStatus.Late;
+
   const blocked = !existing
     ? closed && !item.allowLateSubmission
       ? "The deadline has passed and this assignment does not accept late work."
       : null
     : graded
-      ? "This submission has been reviewed, so it can no longer be changed."
+      ? "This submission has been reviewed and graded, so it can no longer be changed."
       : !item.allowUpdateBeforeDeadline
-        ? "This assignment does not allow submissions to be updated."
+        ? "This assignment does not allow submissions to be updated once turned in."
         : closed
           ? "The deadline has passed, so this submission can no longer be updated."
           : null;
@@ -119,156 +146,212 @@ export default function StudentAssignmentDetailPage() {
     setFailure(null);
     setSaved(null);
 
-    const body = {
-      answerText: values.answerText,
-      attachmentUrl: values.attachmentUrl === "" ? null : values.attachmentUrl,
-    };
-
     try {
-      if (existing) {
-        await api.put<SubmissionDto>(`/submissions/${existing.id}`, body);
-        setSaved("Your submission has been updated.");
-      } else {
-        await api.post<SubmissionDto>(`/assignments/${item.id}/submit`, body);
-        setSaved("Your answer has been submitted.");
-      }
-
-      assignment.reload();
-      submission.reload();
+      await saveSubmission.mutateAsync(values);
+      const message = existing
+        ? "Your submission has been updated successfully."
+        : "Your answer has been submitted successfully.";
+      setSaved(message);
     } catch (cause) {
-      // A 422 names the field it rejected, so put the message back on that field.
-      if (cause instanceof ApiError && cause.status === 422) {
-        for (const [field, message] of Object.entries(cause.fieldErrors)) {
-          if (field === "answerText" || field === "attachmentUrl") {
-            setError(field, { message });
-          }
-        }
-      }
-
       setFailure(cause);
     }
   });
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+      <Link
+        href="/student/assignments"
+        className="mt-6 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 transition-colors duration-150 hover:text-accent-400"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        Available assignments
+      </Link>
+
       <PageHeader
+        eyebrow="Student"
         title={item.title}
-        description={`${item.subjectName} · ${item.classCourseCode} · set by ${item.teacherName}`}
-        action={
-          <Link href="/student/assignments">
-            <Button variant="secondary">Back to list</Button>
-          </Link>
-        }
+        description={`${item.subjectName} · Course: ${item.classCourseCode} · Instructor: ${item.teacherName}`}
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="space-y-4 lg:col-span-2">
+        {/* Brief & submission */}
+        <Card className="space-y-5 p-6 lg:col-span-2">
           <div>
-            <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">Brief</h2>
-            <p className="mt-1.5 text-sm whitespace-pre-wrap text-slate-700 dark:text-slate-300">
-              {item.description}
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-500">
+              Assignment Instructions & Brief
             </p>
+            <div className="rounded-md border border-line bg-ink-950/60 p-4">
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
+                {item.description}
+              </p>
+            </div>
           </div>
 
-          <hr className="border-slate-200 dark:border-slate-700" />
+          <hr className="border-line" />
 
           <form onSubmit={onSubmit} className="space-y-4" noValidate>
-            <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {existing ? "Your submission" : "Submit your answer"}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white">
+                {existing ? "Your Submitted Work" : "Turn in Your Submission"}
+              </h2>
+              {existing && <SubmissionStatusBadge status={existing.status} />}
+            </div>
 
             {saved && <SuccessBanner>{saved}</SuccessBanner>}
             <ErrorBanner error={failure} />
 
             {blocked && (
-              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                {blocked}
-              </p>
+              <div className="flex gap-3 rounded-md border border-accent-400/40 bg-amber-950/40 p-4 text-sm text-amber-200">
+                <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-accent-400" aria-hidden />
+                <span>{blocked}</span>
+              </div>
             )}
 
-            <TextAreaField
-              label="Answer"
-              rows={10}
-              disabled={blocked !== null}
-              error={errors.answerText?.message}
-              {...register("answerText")}
-            />
+            <div className="space-y-1">
+              <TextAreaField
+                label="Your Answer"
+                rows={10}
+                placeholder="Type or paste your complete solution here…"
+                disabled={blocked !== null}
+                error={errors.answerText?.message}
+                {...register("answerText")}
+              />
+            </div>
 
             <TextField
-              label="Attachment URL"
-              placeholder="https://…"
-              hint="Optional. A link to your work, if it lives elsewhere."
+              label="Project Repository or Attachment URL (Optional)"
+              placeholder="https://github.com/… or https://drive.google.com/…"
+              hint="Include a live demo link, GitHub repository, or cloud document link if requested."
               disabled={blocked !== null}
               error={errors.attachmentUrl?.message}
               {...register("attachmentUrl")}
             />
 
             {!blocked && (
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Saving…" : existing ? "Update submission" : "Submit"}
-              </Button>
+              <div className="pt-2">
+                <Button
+                  type="submit"
+                  className="px-6"
+                  disabled={isSubmitting || saveSubmission.isPending}
+                >
+                  {isSubmitting || saveSubmission.isPending ? (
+                    "Submitting…"
+                  ) : existing ? (
+                    <>
+                      <Send className="h-4 w-4" aria-hidden />
+                      Save Submission Update
+                    </>
+                  ) : (
+                    "Submit Assignment Answer"
+                  )}
+                </Button>
+              </div>
             )}
           </form>
         </Card>
 
-        <div className="space-y-6">
-          <Card className="space-y-3 text-sm">
-            <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">Details</h2>
+        {/* Rules & result */}
+        <div className="space-y-5">
+          <Card className="space-y-4 p-5">
+            <p className="border-b border-line pb-2 text-[11px] font-bold uppercase tracking-widest text-slate-500">
+              Assignment Rules & Schedule
+            </p>
 
-            <div>
-              <p className="text-xs text-slate-500">Deadline</p>
-              <p>{formatDateTime(item.deadline)}</p>
-              <p className={`text-xs ${closed ? "text-red-600" : "text-slate-500"}`}>
-                {closed ? "closed " : ""}
-                {relativeToNow(item.deadline)}
-              </p>
-            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-slate-500">Submission Deadline</p>
+                <p className="mt-0.5 font-semibold text-white">{formatDateTime(item.deadline)}</p>
+                <p
+                  className={`mt-0.5 text-xs ${
+                    closed ? "font-bold text-red-400" : "font-medium text-emerald-400"
+                  }`}
+                >
+                  {closed ? "Closed " : "Due "}
+                  {relativeToNow(item.deadline)}
+                </p>
+              </div>
 
-            <div>
-              <p className="text-xs text-slate-500">Maximum marks</p>
-              <p>{item.maxMarks}</p>
-            </div>
+              <div>
+                <p className="text-xs text-slate-500">Maximum Marks</p>
+                <p className="mt-0.5 text-xl font-bold text-accent-400">{item.maxMarks} pts</p>
+              </div>
 
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Badge tone={item.allowLateSubmission ? "green" : "neutral"}>
-                {item.allowLateSubmission ? "Late work accepted" : "No late work"}
-              </Badge>
-              <Badge tone={item.allowUpdateBeforeDeadline ? "green" : "neutral"}>
-                {item.allowUpdateBeforeDeadline ? "Updates allowed" : "No updates"}
-              </Badge>
+              <div className="flex flex-col gap-1.5 border-t border-line pt-2">
+                <span className="flex items-center gap-2 text-xs text-slate-300">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      item.allowLateSubmission ? "bg-emerald-500" : "bg-slate-500"
+                    }`}
+                    aria-hidden
+                  />
+                  {item.allowLateSubmission
+                    ? "Late submissions accepted"
+                    : "Strict deadline (no late work)"}
+                </span>
+                <span className="flex items-center gap-2 text-xs text-slate-300">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      item.allowUpdateBeforeDeadline ? "bg-emerald-500" : "bg-slate-500"
+                    }`}
+                    aria-hidden
+                  />
+                  {item.allowUpdateBeforeDeadline
+                    ? "Revisions allowed before deadline"
+                    : "Single submission only"}
+                </span>
+              </div>
             </div>
           </Card>
 
           {existing && (
-            <Card className="space-y-3 text-sm">
-              <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">Result</h2>
+            <Card className="space-y-4 p-5">
+              <p className="border-b border-line pb-2 text-[11px] font-bold uppercase tracking-widest text-accent-400">
+                Submission Evaluation
+              </p>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">Status:</span>
                 <SubmissionStatusBadge status={existing.status} />
               </div>
 
-              <div>
-                <p className="text-xs text-slate-500">Submitted</p>
-                <p>{formatDateTime(existing.submittedAt)}</p>
-              </div>
-
-              <div>
-                <p className="text-xs text-slate-500">Marks</p>
-                <p className="text-lg font-semibold">
-                  {existing.marks === null ? "Not marked yet" : `${existing.marks} / ${existing.maxMarks}`}
-                </p>
+              <div className="space-y-1.5">
+                <p className="text-xs text-slate-500">Score Received</p>
+                {existing.marks === null ? (
+                  <p className="text-sm font-medium text-accent-400">
+                    Pending Evaluation by Instructor
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-2xl font-bold text-emerald-300">
+                      {existing.marks}{" "}
+                      <span className="text-sm font-normal text-slate-500">
+                        / {existing.maxMarks}
+                      </span>
+                    </p>
+                    <ProgressBar value={existing.marks} max={existing.maxMarks} tone="emerald" />
+                  </div>
+                )}
               </div>
 
               {existing.feedback && (
-                <div>
-                  <p className="text-xs text-slate-500">Feedback</p>
-                  <p className="whitespace-pre-wrap">{existing.feedback}</p>
+                <div className="border-t border-line pt-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                    Teacher Feedback
+                  </p>
+                  <blockquote className="mt-1.5 whitespace-pre-wrap rounded-md border-l-2 border-accent-400 bg-ink-850/60 p-3 text-sm italic text-slate-300">
+                    {existing.feedback}
+                  </blockquote>
                 </div>
               )}
+
+              <p className="flex items-center gap-1.5 pt-1 text-[11px] text-slate-500">
+                <FileText className="h-3 w-3" aria-hidden />
+                Handed in: {formatDateTime(existing.submittedAt)}
+              </p>
             </Card>
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }

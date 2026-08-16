@@ -2,26 +2,46 @@
 // Not licensed for production or commercial use. See LICENSE. sig:a24a5edb253940aa
 
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { CursorField } from "@/components/effects/CursorField";
+import { PageTransition } from "@/components/layout/PageTransition";
+import { SmoothScroll } from "@/components/smooth-scroll";
 import { AuthProvider } from "@/lib/auth-context";
+import { QueryProvider } from "@/lib/query";
+import { ToastProvider } from "@/lib/toast";
 import "./globals.css";
 
-// No next/font/google here on purpose. It fetches the font files during `next build`,
-// which makes the Docker image build depend on outbound network access to Google — a
-// build that fails on a machine behind a proxy, for a typeface. The system stack below
-// costs nothing and renders everywhere.
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Assignment & Submission System",
+  title: "Assignment & Submission Management System",
   description:
     "Role-based assignment and submission management for schools and colleges. "
-    + "Evaluation build by Rakib Hassan.",
+    + "Evaluation build by Rakib Hassan for OnnoRokom Projukti Ltd.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="flex min-h-full flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-        <AuthProvider>{children}</AuthProvider>
+    <html lang="en" className={`${inter.variable} h-full antialiased`}>
+      <body className="relative flex min-h-full flex-col bg-ink-950 text-slate-300">
+        {/* Full-viewport mouse-reactive canvas grid, behind everything */}
+        <CursorField />
+
+        <AuthProvider>
+          <QueryProvider>
+            <ToastProvider>
+              {/* Exit/enter transition on every route change */}
+              <PageTransition>{children}</PageTransition>
+            </ToastProvider>
+          </QueryProvider>
+        </AuthProvider>
+
+        {/* Lenis smooth scrolling; no-ops under prefers-reduced-motion */}
+        <SmoothScroll />
       </body>
     </html>
   );

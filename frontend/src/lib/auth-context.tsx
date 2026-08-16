@@ -19,7 +19,7 @@ interface AuthState {
   /** False until hydration has run — see Session.ready. Guards wait for it rather than
    *  redirecting on the first render. */
   ready: boolean;
-  login: (email: string, password: string) => Promise<UserProfile>;
+  login: (email: string, password: string, honeypot?: string) => Promise<UserProfile>;
   logout: () => void;
 }
 
@@ -31,8 +31,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // than mirrored into state with an effect. No effects in this provider at all.
   const session = useSyncExternalStore(subscribe, getSessionSnapshot, getServerSessionSnapshot);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const auth = await api.login(email, password);
+  const login = useCallback(async (email: string, password: string, honeypot?: string) => {
+    const auth = await api.login(email, password, honeypot);
 
     // Writing to the store notifies every subscriber, this provider included.
     setSession(auth);

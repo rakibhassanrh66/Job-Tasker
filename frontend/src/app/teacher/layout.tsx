@@ -3,19 +3,14 @@
 
 "use client";
 
-import { AppShell, type NavItem } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { RequireRole } from "@/components/require-role";
 import { UserRole } from "@/lib/types";
 
-const nav: NavItem[] = [
-  { href: "/teacher/assignments", label: "My assignments" },
-  { href: "/teacher/assignments/new", label: "Create assignment" },
-];
-
-export default function TeacherLayout({ children }: LayoutProps<"/teacher">) {
+export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireRole roles={[UserRole.Teacher]}>
-      <AppShell nav={nav}>{children}</AppShell>
+      <AppShell>{children}</AppShell>
     </RequireRole>
   );
 }

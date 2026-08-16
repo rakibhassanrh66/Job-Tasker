@@ -3,163 +3,145 @@
 
 "use client";
 
+import { BookOpenCheck, Plus } from "lucide-react";
 import { useState } from "react";
-import { CreatePanel } from "@/components/create-panel";
-import { DataTable, type Column } from "@/components/data-table";
+import { CreatePanel, type FieldSpec } from "@/components/create-panel";
+import { SortableDataTable, type SortableColumn } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
-import { Button, Card, ErrorBanner, PageHeader, SelectField, TextField } from "@/components/ui";
+import { Badge, Button, Card, PageHeader, StatCard, TextField } from "@/components/ui";
 import { api, query } from "@/lib/api";
+import { useApiMutation, useApiPagedQuery, useApiQuery } from "@/lib/query";
+import { useDebouncedValue } from "@/lib/use-debounced";
 import type { ClassCourseDto, PagedResult, SubjectDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
+
+const PAGE_SIZE = 10;
 
 export default function AdminSubjectsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [classFilter, setClassFilter] = useState("");
-  const [failure, setFailure] = useState<unknown>(null);
-  const [draft, setDraft] = useState({ name: "", code: "", classCourseId: "" });
+  const debouncedSearch = useDebouncedValue(search);
+  const [createOpen, setCreateOpen] = useState(false);
 
-  // Every class, for the create form and the filter. A subject belongs to exactly one.
-  const classes = useApi<PagedResult<ClassCourseDto>>(
-    () => api.get<PagedResult<ClassCourseDto>>("/classes?pageSize=100"),
-    [],
-  );
-
-  const { data, error, loading, reload } = useApi<PagedResult<SubjectDto>>(
+  const { data } = useApiPagedQuery<SubjectDto>(
+    ["admin", "subjects"],
+    { page, pageSize: PAGE_SIZE, search: debouncedSearch },
     () =>
       api.get<PagedResult<SubjectDto>>(
-        `/subjects${query({ page, pageSize: 10, search, classCourseId: classFilter || undefined })}`,
+        `/subjects${query({ page, pageSize: PAGE_SIZE, search: debouncedSearch })}`,
       ),
-    [page, search, classFilter],
   );
 
-  const remove = async (row: SubjectDto) => {
-    if (!window.confirm(`Delete ${row.code}? This cannot be undone.`)) {
-      return;
-    }
+  const { data: classData } = useApiQuery(["admin", "classes", "options"], () =>
+    api.get<PagedResult<ClassCourseDto>>("/classes?pageSize=100"),
+  );
 
-    setFailure(null);
+  const rows = data?.items ?? [];
+  const totalCount = data?.totalCount ?? 0;
 
-    try {
-      await api.del(`/subjects/${row.id}`);
-      reload();
-    } catch (cause) {
-      setFailure(cause);
-    }
-  };
+  const createSubject = useApiMutation<unknown, Record<string, string>>({
+    mutationFn: (values) =>
+      api.post("/subjects", {
+        name: values.name,
+        code: values.code,
+        classCourseId: values.classCourseId,
+      }),
+    invalidate: [["admin", "subjects"], ["admin", "subjects", "count"], ["admin", "classes"]],
+    successMessage: (_, values) => `${values.name} has been created.`,
+  });
 
-  const columns: Column<SubjectDto>[] = [
+  const subjectFields: FieldSpec[] = [
+    { name: "name", label: "Subject Name", type: "text", required: true, placeholder: "e.g. Physics" },
+    { name: "code", label: "Code", type: "text", required: true, placeholder: "e.g. PHY" },
     {
+      name: "classCourseId",
+      label: "Class / Course",
+      type: "select",
+      required: true,
+      options:
+        classData?.items.map((classCourse) => ({
+          value: classCourse.id,
+          label: `${classCourse.name} (${classCourse.code})`,
+        })) ?? [],
+    },
+  ];
+
+  const columns: SortableColumn<SubjectDto>[] = [
+    {
+      key: "name",
       header: "Subject",
-      cell: (row) => (
+      sortValue: (row) => row.name.toLowerCase(),
+      render: (row) => (
         <div>
-          <p className="font-medium text-slate-900 dark:text-white">{row.name}</p>
-          <p className="font-mono text-xs text-slate-500">{row.code}</p>
+          <p className="font-semibold text-white">{row.name}</p>
+          <p className="mt-0.5 font-mono text-xs text-slate-500">{row.code}</p>
         </div>
       ),
     },
     {
-      header: "Class",
-      cell: (row) => (
-        <div>
-          <p>{row.classCourseName}</p>
-          <p className="font-mono text-xs text-slate-500">{row.classCourseCode}</p>
-        </div>
-      ),
-    },
-    {
-      header: "",
-      align: "right",
-      cell: (row) => (
-        <Button variant="ghost" onClick={() => void remove(row)}>
-          Delete
-        </Button>
+      key: "classCourseName",
+      header: "Class / Course",
+      sortValue: (row) => row.classCourseName.toLowerCase(),
+      render: (row) => (
+        <Badge tone="blue">
+          {row.classCourseName} ({row.classCourseCode})
+        </Badge>
       ),
     },
   ];
 
   return (
-    <>
-      <PageHeader title="Subjects" description="Subjects taught within a class." />
+    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+      <PageHeader
+        eyebrow="Administrator"
+        title="Subjects"
+        description="The curriculum units that teachers are allocated to teach."
+        action={
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden />
+            New Subject
+          </Button>
+        }
+      />
 
-      <ErrorBanner error={failure} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <StatCard title="Total Subjects" value={totalCount} tone="amber" icon={BookOpenCheck} />
+        <StatCard title="Available Classes" value={classData?.totalCount ?? 0} tone="sky" />
+      </div>
 
-      <CreatePanel
-        title="Add subject"
-        submitLabel="Create subject"
-        onSubmit={async () => {
-          await api.post("/subjects", draft);
-        }}
-        onCreated={() => {
-          setDraft({ name: "", code: "", classCourseId: "" });
-          reload();
-        }}
-      >
-        <TextField
-          label="Name"
-          placeholder="Data Structures"
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        />
-        <TextField
-          label="Code"
-          placeholder="DS-101"
-          value={draft.code}
-          onChange={(e) => setDraft({ ...draft, code: e.target.value })}
-        />
-        <SelectField
-          label="Class"
-          value={draft.classCourseId}
-          onChange={(e) => setDraft({ ...draft, classCourseId: e.target.value })}
-        >
-          <option value="">Choose…</option>
-          {classes.data?.items.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.code} — {option.name}
-            </option>
-          ))}
-        </SelectField>
-      </CreatePanel>
-
-      <Card className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:max-w-xl">
+      <Card className="mt-8 space-y-5 p-5">
+        <div className="w-full max-w-md">
           <TextField
-            label="Search"
-            placeholder="Name or code"
+            label="Search Subjects"
+            placeholder="Search by name or code…"
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
               setPage(1);
             }}
           />
-          <SelectField
-            label="Class"
-            value={classFilter}
-            onChange={(e) => {
-              setClassFilter(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All classes</option>
-            {classes.data?.items.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.code}
-              </option>
-            ))}
-          </SelectField>
         </div>
 
-        <DataTable
-          rows={data?.items}
+        <SortableDataTable
           columns={columns}
-          loading={loading}
-          error={error}
-          rowKey={(row) => row.id}
-          empty="No subjects yet"
+          rows={rows}
+          loading={data === undefined}
+          emptyTitle="No subjects found"
+          emptyHint="Create a subject and bind it to a class."
+          emptyIcon={BookOpenCheck}
         />
 
-        {data && <Pagination page={data} onPageChange={setPage} />}
+        <Pagination page={page} pageSize={PAGE_SIZE} totalCount={totalCount} onPageChange={setPage} />
       </Card>
-    </>
+
+      <CreatePanel
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New Subject"
+        description="Subjects belong to exactly one class; teachers are allocated to them next."
+        fields={subjectFields}
+        submitLabel="Create Subject"
+        onSubmit={createSubject.mutateAsync}
+      />
+    </div>
   );
 }

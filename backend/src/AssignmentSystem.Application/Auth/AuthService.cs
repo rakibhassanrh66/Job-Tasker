@@ -26,6 +26,7 @@ public class AuthService : IAuthService
     private readonly ITokenService _tokenService;
     private readonly ICurrentUser _currentUser;
     private readonly IClock _clock;
+    private readonly ILoginThrottle _loginThrottle;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -34,6 +35,7 @@ public class AuthService : IAuthService
         ITokenService tokenService,
         ICurrentUser currentUser,
         IClock clock,
+        ILoginThrottle loginThrottle,
         ILogger<AuthService> logger)
     {
         _db = db;
@@ -41,6 +43,7 @@ public class AuthService : IAuthService
         _tokenService = tokenService;
         _currentUser = currentUser;
         _clock = clock;
+        _loginThrottle = loginThrottle;
         _logger = logger;
     }
 
@@ -48,6 +51,23 @@ public class AuthService : IAuthService
         LoginRequest request, CancellationToken cancellationToken = default)
     {
         var email = Normalise(request.Email);
+
+        // Account lockout is checked before any lookup so a locked account never even
+        // reaches the hasher. Escalating backoff keeps an attacker from hammering one
+        // account from thousands of addresses, which the per-address limiter cannot see.
+        var lockout = _loginThrottle.RemainingLockout(email);
+        if (lockout is not null)
+        {
+            _logger.LogWarning("Login rejected: account {Email} is locked out.", email);
+            throw new RateLimitedException(lockout.Value);
+        }
+
+        // Per-account attempt window, independent of the caller's address.
+        if (!_loginThrottle.AllowAttempt(email))
+        {
+            _logger.LogWarning("Login rejected: account {Email} exceeded its attempt window.", email);
+            throw new RateLimitedException();
+        }
 
         var user = await _db.Users.SingleOrDefaultAsync(u => u.Email == email, cancellationToken);
 
@@ -59,21 +79,25 @@ public class AuthService : IAuthService
             _passwordHasher.Verify(DummyHash, request.Password);
 
             _logger.LogWarning("Login rejected: no account for {Email}.", email);
+            _loginThrottle.RecordFailure(email);
             throw new InvalidCredentialsException();
         }
 
         if (!_passwordHasher.Verify(user.PasswordHash, request.Password))
         {
             _logger.LogWarning("Login rejected: bad password for {Email}.", email);
+            _loginThrottle.RecordFailure(email);
             throw new InvalidCredentialsException();
         }
 
         if (!user.IsActive)
         {
             _logger.LogWarning("Login rejected: account {Email} is deactivated.", email);
+            _loginThrottle.RecordFailure(email);
             throw new InvalidCredentialsException();
         }
 
+        _loginThrottle.RecordSuccess(email);
         _logger.LogInformation("Login succeeded for {Email} ({Role}).", email, user.Role);
 
         return await IssueTokensAsync(user, cancellationToken);
