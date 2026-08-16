@@ -61,7 +61,7 @@ automatically on first start — there is no manual SQL step.
 
 | What | Where |
 |---|---|
-| Frontend (Vercel) | <https://frontend-hazel-omega-38.vercel.app> |
+| Frontend (Vercel) | <https://frontend-rakib-hassans-projects-0d2556b6.vercel.app> |
 | API (Swagger UI) | <https://shadow-gotta-designers-vinyl.trycloudflare.com/swagger> |
 
 The frontend is built on Vercel with the API URL inlined. The API itself runs on the author's
